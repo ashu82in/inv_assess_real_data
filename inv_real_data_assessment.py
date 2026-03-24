@@ -25,7 +25,6 @@ if uploaded_file:
             .str.lower()
         )
 
-        # Rename
         if "balance" in df.columns:
             df.rename(columns={"balance": "Closing Stock"}, inplace=True)
 
@@ -74,20 +73,17 @@ if uploaded_file:
         df["Inventory Value"] = opening_inventory + df["Net Value"].cumsum()
 
         # =========================
-        # 🔹 GROUPED DATA (FIXED)
+        # 🔹 GROUPED DATA
         # =========================
         df_grouped = df.groupby("Date").agg({
             "Received": "sum",
             "Issued": "sum"
         })
 
-        # =========================
-        # 🔹 DATE RANGE
-        # =========================
         full_dates = pd.date_range(df["Date"].min(), df["Date"].max())
 
         # =========================
-        # 🔹 FIFO + AGING ENGINE
+        # 🔹 FIFO ENGINE
         # =========================
         inventory_layers = []
         age_list, bucket_data, dead_list = [], [], []
@@ -104,11 +100,9 @@ if uploaded_file:
                 received = 0
                 issued = 0
 
-            # Add stock
             if received > 0:
                 inventory_layers.append({"qty": received, "date": current_date})
 
-            # Remove stock (FIFO)
             qty_to_issue = issued
             while qty_to_issue > 0 and inventory_layers:
                 layer = inventory_layers[0]
@@ -119,7 +113,6 @@ if uploaded_file:
                     layer["qty"] -= qty_to_issue
                     qty_to_issue = 0
 
-            # Opening stock logic
             if opening_remaining > 0:
                 opening_remaining -= issued
                 age_list.append(None)
@@ -129,7 +122,6 @@ if uploaded_file:
 
             total_qty = sum(l["qty"] for l in inventory_layers)
 
-            # AGE
             if total_qty == 0:
                 age_list.append(0)
             else:
@@ -138,7 +130,6 @@ if uploaded_file:
                 )
                 age_list.append(weighted_age / total_qty)
 
-            # VALUE BUCKETS
             b1 = b2 = b3 = b4 = dead_val = 0
 
             for l in inventory_layers:
@@ -176,11 +167,10 @@ if uploaded_file:
 
         daily.rename(columns={
             "Received": "Total Received",
-            "Issued": "Total Issed",
+            "Issued": "Total Issued",
             "Closing Stock": "Closing_Stock"
         }, inplace=True)
 
-        # Merge everything
         daily = pd.DataFrame({"Date": full_dates}).merge(daily, on="Date", how="left")
         daily = daily.merge(age_df, on="Date", how="left")
         daily = daily.merge(bucket_df, on="Date", how="left")
@@ -202,27 +192,55 @@ if uploaded_file:
         st.subheader("📌 Key Metrics")
 
         col1, col2, col3, col4 = st.columns(4)
-
         col1.metric("Inventory Value", int(daily.iloc[-1]["Inventory Value"]))
         col2.metric("Dead Stock ₹", int(daily.iloc[-1]["Dead Value"]))
         col3.metric("Locked Capital %", round(daily.iloc[-1]["Locked %"], 1))
         col4.metric("Avg Age", int(daily["Avg Age"].mean()))
 
         # =========================
-        # 🔹 SKU ANALYSIS
+        # 🔹 CHARTS
+        # =========================
+
+        st.subheader("📦 Inventory Quantity Trend")
+        fig_qty = go.Figure()
+        fig_qty.add_trace(go.Scatter(x=daily["Date"], y=daily["Closing_Stock"]))
+        fig_qty.add_trace(go.Scatter(x=daily["Date"], y=[stockout_threshold]*len(daily), line=dict(dash="dash")))
+        st.plotly_chart(fig_qty, use_container_width=True)
+
+        st.subheader("💰 Inventory Value Trend")
+        fig_val = go.Figure()
+        fig_val.add_trace(go.Scatter(x=daily["Date"], y=daily["Inventory Value"]))
+        st.plotly_chart(fig_val, use_container_width=True)
+
+        st.subheader("💸 Working Capital Lock Trend")
+        fig_wc = go.Figure()
+        fig_wc.add_trace(go.Scatter(x=daily["Date"], y=daily["Locked %"]))
+        st.plotly_chart(fig_wc, use_container_width=True)
+
+        st.subheader("⏳ Inventory Age Trend")
+        fig_age = go.Figure()
+        fig_age.add_trace(go.Scatter(x=daily["Date"], y=daily["Avg Age"]))
+        st.plotly_chart(fig_age, use_container_width=True)
+
+        st.subheader("📊 Value Aging Buckets")
+        fig_bucket = go.Figure()
+        fig_bucket.add_bar(x=daily["Date"], y=daily["0-30"], name="0-30")
+        fig_bucket.add_bar(x=daily["Date"], y=daily["31-60"], name="31-60")
+        fig_bucket.add_bar(x=daily["Date"], y=daily["61-90"], name="61-90")
+        fig_bucket.add_bar(x=daily["Date"], y=daily["90+"], name="90+")
+        fig_bucket.update_layout(barmode="stack")
+        st.plotly_chart(fig_bucket, use_container_width=True)
+
+        # =========================
+        # 🔹 ANALYSIS
         # =========================
         if "SKU" in df.columns:
             st.subheader("📦 SKU Analysis")
-            sku_df = df.groupby("SKU")["Net Value"].sum().reset_index()
-            st.dataframe(sku_df)
+            st.dataframe(df.groupby("SKU")["Net Value"].sum().reset_index())
 
-        # =========================
-        # 🔹 SUPPLIER ANALYSIS
-        # =========================
         if "Supplier" in df.columns:
             st.subheader("🏭 Supplier Analysis")
-            sup_df = df.groupby("Supplier")["Net Value"].sum().reset_index()
-            st.dataframe(sup_df)
+            st.dataframe(df.groupby("Supplier")["Net Value"].sum().reset_index())
 
         # =========================
         # 🔹 CASH FLOW
@@ -234,20 +252,6 @@ if uploaded_file:
 
         st.metric("Cash Inflow", int(cash_in))
         st.metric("Cash Outflow", int(cash_out))
-
-        # =========================
-        # 🔹 CHART
-        # =========================
-        st.subheader("💰 Value Aging Buckets")
-
-        fig = go.Figure()
-        fig.add_bar(x=daily["Date"], y=daily["0-30"], name="0-30")
-        fig.add_bar(x=daily["Date"], y=daily["31-60"], name="31-60")
-        fig.add_bar(x=daily["Date"], y=daily["61-90"], name="61-90")
-        fig.add_bar(x=daily["Date"], y=daily["90+"], name="90+")
-        fig.update_layout(barmode="stack")
-
-        st.plotly_chart(fig, use_container_width=True)
 
         if st.checkbox("Show Data"):
             st.dataframe(daily)
