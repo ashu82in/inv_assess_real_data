@@ -164,7 +164,7 @@ if uploaded_file:
         age_df = pd.DataFrame({"Date": full_dates, "Avg Age": age_list})
         bucket_df = pd.DataFrame(bucket_data, columns=["Date", "0-30", "31-60", "61-90", "90+"])
         dead_df = pd.DataFrame({"Date": full_dates, "Dead Value": dead_list})
-
+        st.write(age_df)
         # =========================
         # 🔹 DAILY SUMMARY
         # =========================
