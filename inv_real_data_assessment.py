@@ -36,7 +36,7 @@ if uploaded_file:
             "received": "Received",
             "issued": "Issued",
             "value": "Value",
-            "closing stock": "Closing Stock",
+            # "closing stock": "Closing Stock",
             "balance": "Closing Stock"   # ✅ Handles your case
         })
 
