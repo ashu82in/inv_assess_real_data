@@ -190,6 +190,7 @@ if uploaded_file:
         daily["Closing_Stock"] = daily["Closing_Stock"].ffill().fillna(0)
         daily["Inventory Value"] = daily["Inventory Value"].ffill().fillna(opening_inventory)
         daily["Avg Age"] = daily["Avg Age"].ffill()
+        st.write(daily)
 
         # =========================
         # 🔹 STOCK-OUT & REORDER
