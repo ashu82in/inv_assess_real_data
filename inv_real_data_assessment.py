@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import timedelta
 
+
 st.set_page_config(layout="wide")
 
 st.title("📊 Inventory Intelligence Dashboard")
