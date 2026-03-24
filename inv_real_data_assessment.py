@@ -190,9 +190,10 @@ if uploaded_file:
         daily["Locked %"] = (daily["90+"] / daily["Inventory Value"]) * 100
 
         # =========================
-        # 🔹 MOVEMENT
+        # 🔹 PURCHASE & SALES
         # =========================
-        daily["Net Movement"] = daily["Total Received"] - daily["Total Issued"]
+        daily["Purchase Qty"] = daily["Total Received"]
+        daily["Sales Qty"] = -daily["Total Issued"]
 
         # =========================
         # 🔹 METRICS
@@ -209,67 +210,47 @@ if uploaded_file:
         col6.metric("Reorder Days", int(reorder_days))
 
         # =========================
-        # 🔹 INVENTORY CHART (FIXED)
+        # 🔹 INVENTORY AGE GRAPH (FINAL)
         # =========================
-        st.subheader("📦 Inventory Quantity (with Movement)")
+        st.subheader("⏳ Inventory Age (with Purchases & Sales)")
 
-        fig = go.Figure()
+        fig_age = go.Figure()
 
-        fig.add_trace(go.Scatter(
+        fig_age.add_trace(go.Scatter(
             x=daily["Date"],
-            y=daily["Closing_Stock"],
+            y=daily["Avg Age"],
             mode="lines+markers",
-            name="Stock",
+            name="Avg Age",
+            line=dict(width=3),
             yaxis="y1"
         ))
 
-        fig.add_trace(go.Bar(
+        fig_age.add_trace(go.Bar(
             x=daily["Date"],
-            y=daily["Net Movement"],
-            name="Movement",
-            opacity=0.3,
+            y=daily["Purchase Qty"],
+            name="Purchases",
+            marker=dict(color="green"),
+            opacity=0.25,
             yaxis="y2"
         ))
 
-        fig.add_trace(go.Scatter(
+        fig_age.add_trace(go.Bar(
             x=daily["Date"],
-            y=[stockout_threshold]*len(daily),
-            name="Stock-out",
-            line=dict(dash="dash"),
-            yaxis="y1"
+            y=daily["Sales Qty"],
+            name="Sales",
+            marker=dict(color="red"),
+            opacity=0.25,
+            yaxis="y2"
         ))
 
-        fig.add_trace(go.Scatter(
-            x=daily["Date"],
-            y=[reorder_point]*len(daily),
-            name="Reorder",
-            line=dict(dash="dot"),
-            yaxis="y1"
-        ))
-
-        fig.update_layout(
+        fig_age.update_layout(
             template="simple_white",
-            yaxis=dict(title="Inventory"),
-            yaxis2=dict(overlaying="y", side="right", title="Movement"),
-            barmode="relative"
+            barmode="relative",
+            yaxis=dict(title="Avg Age"),
+            yaxis2=dict(overlaying="y", side="right", title="Movement")
         )
 
-        st.plotly_chart(fig, use_container_width=True)
-
-        # =========================
-        # 🔹 OTHER CHARTS
-        # =========================
-        st.subheader("💰 Inventory Value")
-        st.line_chart(daily.set_index("Date")["Inventory Value"])
-
-        st.subheader("⏳ Inventory Age")
-        st.line_chart(daily.set_index("Date")["Avg Age"])
-
-        st.subheader("📊 Aging Buckets")
-        st.bar_chart(daily.set_index("Date")[["0-30", "31-60", "61-90", "90+"]])
-
-        st.subheader("💸 Working Capital Lock")
-        st.line_chart(daily.set_index("Date")["Locked %"])
+        st.plotly_chart(fig_age, use_container_width=True)
 
     except Exception as e:
         st.error(str(e))
