@@ -9,6 +9,9 @@ uploaded_file = st.file_uploader("Upload Transaction File", type=["xlsx"])
 
 if uploaded_file:
     try:
+        # =========================
+        # 🔹 READ FILE
+        # =========================
         df = pd.read_excel(uploaded_file, engine="openpyxl")
 
         # =========================
@@ -22,7 +25,7 @@ if uploaded_file:
             .str.lower()
         )
 
-        # Auto mapping
+        # Rename
         if "balance" in df.columns:
             df.rename(columns={"balance": "Closing Stock"}, inplace=True)
 
@@ -37,14 +40,18 @@ if uploaded_file:
         }, inplace=True)
 
         required_cols = ["Date", "Received", "Issued", "Closing Stock", "Rate"]
+
         if not all(col in df.columns for col in required_cols):
             st.error("Missing required columns")
+            st.write(df.columns)
             st.stop()
 
         # =========================
-        # 🔹 DATA CLEANING
+        # 🔹 CLEAN DATA
         # =========================
-        df["Date"] = pd.to_datetime(df["Date"])
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df = df.dropna(subset=["Date"])
+
         for col in ["Received", "Issued", "Rate", "Closing Stock"]:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
@@ -54,25 +61,35 @@ if uploaded_file:
         # 🔹 SETTINGS
         # =========================
         st.sidebar.header("⚙️ Settings")
+
         opening_inventory = st.sidebar.number_input("Opening Inventory Value", value=0)
         stockout_threshold = st.sidebar.number_input("Stock-out Threshold", value=0)
         dead_days = st.sidebar.number_input("Dead Stock Threshold (days)", value=90)
 
         # =========================
-        # 🔹 VALUE
+        # 🔹 VALUE CALCULATION
         # =========================
         df["Net Qty"] = df["Received"] - df["Issued"]
         df["Net Value"] = df["Net Qty"] * df["Rate"]
         df["Inventory Value"] = opening_inventory + df["Net Value"].cumsum()
 
         # =========================
-        # 🔹 FIFO ENGINE
+        # 🔹 GROUPED DATA (FIXED)
         # =========================
-        inventory_layers = []
+        df_grouped = df.groupby("Date").agg({
+            "Received": "sum",
+            "Issued": "sum"
+        })
+
+        # =========================
+        # 🔹 DATE RANGE
+        # =========================
         full_dates = pd.date_range(df["Date"].min(), df["Date"].max())
 
-        df_grouped = df.groupby("Date").agg({"Received": "sum", "Issued": "sum"}).set_index("Date")
-
+        # =========================
+        # 🔹 FIFO + AGING ENGINE
+        # =========================
+        inventory_layers = []
         age_list, bucket_data, dead_list = [], [], []
 
         opening_qty = df.iloc[0]["Closing Stock"] - (df.iloc[0]["Received"] - df.iloc[0]["Issued"])
@@ -80,12 +97,18 @@ if uploaded_file:
 
         for current_date in full_dates:
 
-            received = df_grouped.loc[current_date]["Received"] if current_date in df_grouped.index else 0
-            issued = df_grouped.loc[current_date]["Issued"] if current_date in df_grouped.index else 0
+            if current_date in df_grouped.index:
+                received = df_grouped.loc[current_date]["Received"]
+                issued = df_grouped.loc[current_date]["Issued"]
+            else:
+                received = 0
+                issued = 0
 
+            # Add stock
             if received > 0:
                 inventory_layers.append({"qty": received, "date": current_date})
 
+            # Remove stock (FIFO)
             qty_to_issue = issued
             while qty_to_issue > 0 and inventory_layers:
                 layer = inventory_layers[0]
@@ -96,6 +119,7 @@ if uploaded_file:
                     layer["qty"] -= qty_to_issue
                     qty_to_issue = 0
 
+            # Opening stock logic
             if opening_remaining > 0:
                 opening_remaining -= issued
                 age_list.append(None)
@@ -141,7 +165,7 @@ if uploaded_file:
         dead_df = pd.DataFrame({"Date": full_dates, "Dead Value": dead_list})
 
         # =========================
-        # 🔹 DAILY
+        # 🔹 DAILY SUMMARY
         # =========================
         daily = df.groupby("Date").agg({
             "Received": "sum",
@@ -152,15 +176,17 @@ if uploaded_file:
 
         daily.rename(columns={
             "Received": "Total Received",
-            "Issued": "Total Issued",
+            "Issued": "Total Issed",
             "Closing Stock": "Closing_Stock"
         }, inplace=True)
 
-        daily = pd.DataFrame({"Date": full_dates}).merge(daily, how="left")
+        # Merge everything
+        daily = pd.DataFrame({"Date": full_dates}).merge(daily, on="Date", how="left")
         daily = daily.merge(age_df, on="Date", how="left")
         daily = daily.merge(bucket_df, on="Date", how="left")
         daily = daily.merge(dead_df, on="Date", how="left")
 
+        # Fill missing
         daily["Closing_Stock"] = daily["Closing_Stock"].ffill().fillna(0)
         daily["Inventory Value"] = daily["Inventory Value"].ffill().fillna(opening_inventory)
         daily["Avg Age"] = daily["Avg Age"].ffill()
@@ -176,6 +202,7 @@ if uploaded_file:
         st.subheader("📌 Key Metrics")
 
         col1, col2, col3, col4 = st.columns(4)
+
         col1.metric("Inventory Value", int(daily.iloc[-1]["Inventory Value"]))
         col2.metric("Dead Stock ₹", int(daily.iloc[-1]["Dead Value"]))
         col3.metric("Locked Capital %", round(daily.iloc[-1]["Locked %"], 1))
@@ -193,25 +220,25 @@ if uploaded_file:
         # 🔹 SUPPLIER ANALYSIS
         # =========================
         if "Supplier" in df.columns:
-            st.subheader("🏭 Supplier Slow Stock")
+            st.subheader("🏭 Supplier Analysis")
             sup_df = df.groupby("Supplier")["Net Value"].sum().reset_index()
             st.dataframe(sup_df)
 
         # =========================
         # 🔹 CASH FLOW
         # =========================
-        st.subheader("💸 Cash Flow Impact")
+        st.subheader("💸 Cash Flow")
 
-        cash_in = df["Received"] * df["Rate"]
-        cash_out = df["Issued"] * df["Rate"]
+        cash_in = (df["Issued"] * df["Rate"]).sum()
+        cash_out = (df["Received"] * df["Rate"]).sum()
 
-        st.metric("Cash Inflow", int(cash_out.sum()))
-        st.metric("Cash Outflow", int(cash_in.sum()))
+        st.metric("Cash Inflow", int(cash_in))
+        st.metric("Cash Outflow", int(cash_out))
 
         # =========================
-        # 🔹 CHARTS
+        # 🔹 CHART
         # =========================
-        st.subheader("📊 Value Aging Buckets")
+        st.subheader("💰 Value Aging Buckets")
 
         fig = go.Figure()
         fig.add_bar(x=daily["Date"], y=daily["0-30"], name="0-30")
@@ -222,5 +249,8 @@ if uploaded_file:
 
         st.plotly_chart(fig, use_container_width=True)
 
+        if st.checkbox("Show Data"):
+            st.dataframe(daily)
+
     except Exception as e:
-        st.error(str(e))
+        st.error(f"Error: {e}")
