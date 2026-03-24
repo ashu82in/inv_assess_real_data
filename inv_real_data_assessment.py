@@ -253,7 +253,7 @@ if uploaded_file:
             y=daily["Purchase Qty"],
             name="Purchases",
             marker=dict(color="#2ca02c"),
-            opacity=0.6,
+            opacity=0.8,
             yaxis="y2"
         ))
 
@@ -262,7 +262,7 @@ if uploaded_file:
             y=daily["Sales Qty"],
             name="Sales",
             marker=dict(color="#d62728"),
-            opacity=0.6,
+            opacity=0.8,
             yaxis="y2"
         ))
 
