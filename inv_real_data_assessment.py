@@ -75,6 +75,8 @@ if uploaded_file:
         df["Sales Value"] = df["Issued"] * df["Rate"]
         df["Net Value Movement"] = df["Purchase Value"] - df["Sales Value"]
 
+        st.write(df)
+
         # =========================
         # 🔹 DAILY SUMMARY
         # =========================
