@@ -69,13 +69,32 @@ if uploaded_file:
         df = df.sort_values("Date")
 
         # =========================
+        # 🔹 USER INPUTS
+        # =========================
+        st.sidebar.header("⚙️ Settings")
+
+        opening_inventory = st.sidebar.number_input(
+            "Opening Inventory Value",
+            value=0
+        )
+
+        stockout_threshold = st.sidebar.number_input(
+            "Stock-out Threshold",
+            value=0
+        )
+
+        # =========================
         # 🔹 VALUE CALCULATION
         # =========================
         df["Purchase Value"] = df["Received"] * df["Rate"]
         df["Sales Value"] = df["Issued"] * df["Rate"]
+
         df["Net Value Movement"] = df["Purchase Value"] - df["Sales Value"]
 
-        st.write(df)
+        # =========================
+        # 🔹 RUNNING INVENTORY VALUE
+        # =========================
+        df["Total Inventory"] = opening_inventory + df["Net Value Movement"].cumsum()
 
         # =========================
         # 🔹 DAILY SUMMARY
@@ -83,30 +102,29 @@ if uploaded_file:
         daily_summary = df.groupby("Date").agg({
             "Received": "sum",
             "Issued": "sum",
-            "Purchase Value": "sum",
-            "Sales Value": "sum",
-            "Net Value Movement": "sum"
+            "Total Inventory": "last"
         }).reset_index()
 
         daily_summary["Net Movement"] = (
             daily_summary["Received"] - daily_summary["Issued"]
         )
 
-        # Closing stock (last transaction of day)
+        daily_summary.rename(columns={
+            "Received": "Total Received",
+            "Issued": "Total Issued",
+            "Total Inventory": "Inventory_Value"
+        }, inplace=True)
+
+        # =========================
+        # 🔹 QUANTITY (CLOSING STOCK)
+        # =========================
         closing_stock_daily = df.groupby("Date")["Closing Stock"].last().reset_index()
 
         daily_summary = daily_summary.merge(closing_stock_daily, on="Date", how="left")
 
         daily_summary.rename(columns={
-            "Received": "Total Received",
-            "Issued": "Total Issued",
             "Closing Stock": "Closing_Stock"
         }, inplace=True)
-
-        # =========================
-        # 🔹 INVENTORY VALUE
-        # =========================
-        daily_summary["Inventory Value"] = daily_summary["Net Value Movement"].cumsum()
 
         # =========================
         # 🔹 CONSUMPTION
@@ -129,15 +147,8 @@ if uploaded_file:
             avg_consumption = 0.0001
 
         # =========================
-        # 🔹 STOCK-OUT THRESHOLD
+        # 🔹 STOCK-OUT DAYS
         # =========================
-        st.sidebar.header("⚙️ Settings")
-
-        stockout_threshold = st.sidebar.number_input(
-            "Stock-out Threshold",
-            value=0
-        )
-
         stockout_days = (
             daily_summary["Closing_Stock"] <= stockout_threshold
         ).sum()
@@ -152,7 +163,7 @@ if uploaded_file:
         # =========================
         st.subheader("📌 Key Metrics")
 
-        current_value = daily_summary.iloc[-1]["Inventory Value"]
+        current_value = daily_summary.iloc[-1]["Inventory_Value"]
 
         col1, col2, col3, col4, col5 = st.columns(5)
 
@@ -173,20 +184,20 @@ if uploaded_file:
             st.success("✅ No stock-out risk observed")
 
         # =========================
-        # 🔹 STOCK CHART
+        # 🔹 QUANTITY CHART
         # =========================
         st.subheader("📦 Inventory Quantity Trend")
 
-        fig = go.Figure()
+        fig_qty = go.Figure()
 
-        fig.add_trace(go.Scatter(
+        fig_qty.add_trace(go.Scatter(
             x=daily_summary["Date"],
             y=daily_summary["Closing_Stock"],
             mode="lines+markers",
             name="Stock"
         ))
 
-        fig.add_trace(go.Scatter(
+        fig_qty.add_trace(go.Scatter(
             x=daily_summary["Date"],
             y=[stockout_threshold] * len(daily_summary),
             mode="lines",
@@ -194,43 +205,27 @@ if uploaded_file:
             line=dict(dash="dash", color="red")
         ))
 
-        fig.update_layout(template="simple_white")
+        fig_qty.update_layout(template="simple_white")
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig_qty, use_container_width=True)
 
         # =========================
         # 🔹 VALUE CHART
         # =========================
         st.subheader("💰 Inventory Value Trend")
 
-        fig_value = go.Figure()
+        fig_val = go.Figure()
 
-        fig_value.add_trace(go.Scatter(
+        fig_val.add_trace(go.Scatter(
             x=daily_summary["Date"],
-            y=daily_summary["Inventory Value"],
+            y=daily_summary["Inventory_Value"],
             mode="lines+markers",
             name="Inventory Value"
         ))
 
-        fig_value.add_trace(go.Scatter(
-            x=daily_summary["Date"],
-            y=daily_summary["Purchase Value"],
-            mode="lines",
-            name="Purchase Value",
-            line=dict(dash="dot", color="green")
-        ))
+        fig_val.update_layout(template="simple_white")
 
-        fig_value.add_trace(go.Scatter(
-            x=daily_summary["Date"],
-            y=daily_summary["Sales Value"],
-            mode="lines",
-            name="Sales Value",
-            line=dict(dash="dot", color="red")
-        ))
-
-        fig_value.update_layout(template="simple_white")
-
-        st.plotly_chart(fig_value, use_container_width=True)
+        st.plotly_chart(fig_val, use_container_width=True)
 
         # =========================
         # 🔹 OPTIONAL TABLE
