@@ -15,7 +15,7 @@ if uploaded_file:
         df = pd.read_excel(uploaded_file, engine="openpyxl")
 
         # =========================
-        # 🔹 CLEAN COLUMN NAMES
+        # 🔹 CLEAN COLUMNS
         # =========================
         df.columns = (
             df.columns.str.strip()
@@ -41,7 +41,6 @@ if uploaded_file:
         required = ["Date", "Received", "Issued", "Closing Stock", "Rate"]
         if not all(c in df.columns for c in required):
             st.error("Missing required columns")
-            st.write(df.columns)
             st.stop()
 
         # =========================
@@ -59,8 +58,10 @@ if uploaded_file:
         # 🔹 SETTINGS
         # =========================
         st.sidebar.header("⚙️ Settings")
+
         opening_inventory = st.sidebar.number_input("Opening Inventory Value", value=0)
         stockout_threshold = st.sidebar.number_input("Stock-out Threshold", value=0)
+        reorder_point = st.sidebar.number_input("Reorder Point", value=0)
         dead_days = st.sidebar.number_input("Dead Stock Threshold (days)", value=90)
 
         # =========================
@@ -74,11 +75,14 @@ if uploaded_file:
         df["Sales Value"] = df["Issued"] * df["Rate"]
 
         # =========================
-        # 🔹 DATE ENGINE
+        # 🔹 DATE RANGE
         # =========================
-        df_grouped = df.groupby("Date").agg({"Received": "sum", "Issued": "sum"})
         full_dates = pd.date_range(df["Date"].min(), df["Date"].max())
+        df_grouped = df.groupby("Date").agg({"Received": "sum", "Issued": "sum"})
 
+        # =========================
+        # 🔹 FIFO ENGINE (TRUE AGE)
+        # =========================
         inventory_layers = []
         age_list, bucket_data, dead_list = [], [], []
 
@@ -94,9 +98,16 @@ if uploaded_file:
                 received = 0
                 issued = 0
 
+            # Add inventory layer
             if received > 0:
-                inventory_layers.append({"qty": received, "date": current_date})
+                day_rate = df[df["Date"] == current_date]["Rate"].mean()
+                inventory_layers.append({
+                    "qty": received,
+                    "date": current_date,
+                    "rate": day_rate
+                })
 
+            # Remove inventory (FIFO)
             qty_to_issue = issued
             while qty_to_issue > 0 and inventory_layers:
                 layer = inventory_layers[0]
@@ -107,6 +118,7 @@ if uploaded_file:
                     layer["qty"] -= qty_to_issue
                     qty_to_issue = 0
 
+            # Skip age until opening stock is exhausted
             if opening_remaining > 0:
                 opening_remaining -= issued
                 age_list.append(None)
@@ -116,17 +128,23 @@ if uploaded_file:
 
             total_qty = sum(l["qty"] for l in inventory_layers)
 
+            # TRUE AGE
             if total_qty == 0:
-                age_list.append(0)
+                avg_age = 0
             else:
-                weighted_age = sum(l["qty"] * (current_date - l["date"]).days for l in inventory_layers)
-                age_list.append(weighted_age / total_qty)
+                weighted_age = sum(
+                    l["qty"] * (current_date - l["date"]).days for l in inventory_layers
+                )
+                avg_age = weighted_age / total_qty
 
+            age_list.append(avg_age)
+
+            # VALUE BUCKETS
             b1 = b2 = b3 = b4 = dead_val = 0
 
             for l in inventory_layers:
                 age = (current_date - l["date"]).days
-                value = l["qty"] * df["Rate"].iloc[-1]
+                value = l["qty"] * l["rate"]
 
                 if age <= 30:
                     b1 += value
@@ -148,7 +166,7 @@ if uploaded_file:
         dead_df = pd.DataFrame({"Date": full_dates, "Dead Value": dead_list})
 
         # =========================
-        # 🔹 DAILY
+        # 🔹 DAILY SUMMARY
         # =========================
         daily = df.groupby("Date").agg({
             "Received": "sum",
@@ -168,10 +186,23 @@ if uploaded_file:
         daily = daily.merge(bucket_df, on="Date", how="left")
         daily = daily.merge(dead_df, on="Date", how="left")
 
+        # Fill missing values
         daily["Closing_Stock"] = daily["Closing_Stock"].ffill().fillna(0)
         daily["Inventory Value"] = daily["Inventory Value"].ffill().fillna(opening_inventory)
         daily["Avg Age"] = daily["Avg Age"].ffill()
 
+        # =========================
+        # 🔹 STOCK-OUT & REORDER
+        # =========================
+        daily["Stockout Flag"] = daily["Closing_Stock"] <= stockout_threshold
+        daily["Reorder Flag"] = daily["Closing_Stock"] <= reorder_point
+
+        stockout_days = daily["Stockout Flag"].sum()
+        reorder_days = daily["Reorder Flag"].sum()
+
+        # =========================
+        # 🔹 WORKING CAPITAL
+        # =========================
         daily["Locked %"] = (daily["90+"] / daily["Inventory Value"]) * 100
 
         # =========================
@@ -179,18 +210,48 @@ if uploaded_file:
         # =========================
         st.subheader("📌 Key Metrics")
 
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5, col6 = st.columns(6)
+
         col1.metric("Inventory Value", int(daily.iloc[-1]["Inventory Value"]))
         col2.metric("Dead Stock ₹", int(daily.iloc[-1]["Dead Value"]))
         col3.metric("Locked Capital %", round(daily.iloc[-1]["Locked %"], 1))
         col4.metric("Avg Age", int(daily["Avg Age"].mean()))
+        col5.metric("Stock-out Days", int(stockout_days))
+        col6.metric("Reorder Days", int(reorder_days))
 
         # =========================
-        # 🔹 CHARTS
+        # 🔹 INVENTORY CHART
         # =========================
         st.subheader("📦 Inventory Quantity")
-        st.line_chart(daily.set_index("Date")["Closing_Stock"])
 
+        fig_qty = go.Figure()
+
+        fig_qty.add_trace(go.Scatter(
+            x=daily["Date"],
+            y=daily["Closing_Stock"],
+            mode="lines+markers",
+            name="Stock"
+        ))
+
+        fig_qty.add_trace(go.Scatter(
+            x=daily["Date"],
+            y=[stockout_threshold]*len(daily),
+            name="Stock-out Threshold",
+            line=dict(dash="dash", color="red")
+        ))
+
+        fig_qty.add_trace(go.Scatter(
+            x=daily["Date"],
+            y=[reorder_point]*len(daily),
+            name="Reorder Point",
+            line=dict(dash="dot", color="orange")
+        ))
+
+        st.plotly_chart(fig_qty, use_container_width=True)
+
+        # =========================
+        # 🔹 OTHER CHARTS
+        # =========================
         st.subheader("💰 Inventory Value")
         st.line_chart(daily.set_index("Date")["Inventory Value"])
 
@@ -200,11 +261,24 @@ if uploaded_file:
         st.subheader("⏳ Inventory Age")
         st.line_chart(daily.set_index("Date")["Avg Age"])
 
-        st.subheader("📊 Aging Buckets")
+        st.subheader("📊 Aging Buckets (₹)")
         st.bar_chart(daily.set_index("Date")[["0-30", "31-60", "61-90", "90+"]])
 
         # =========================
-        # 🔹 SUPPLIER VS CUSTOMER
+        # 🔹 REORDER ALERT TABLE
+        # =========================
+        st.subheader("📦 Reorder Alerts")
+
+        reorder_df = daily[daily["Reorder Flag"]]
+
+        if not reorder_df.empty:
+            st.warning("Reorder required on these dates")
+            st.dataframe(reorder_df[["Date", "Closing_Stock"]])
+        else:
+            st.success("No reorder required")
+
+        # =========================
+        # 🔹 SUPPLIER & CUSTOMER
         # =========================
         if "Party" in df.columns:
 
@@ -216,21 +290,14 @@ if uploaded_file:
             cust = df[df["Issued"] > 0].groupby(["Date", "Party"])["Sales Value"].sum().unstack().fillna(0)
             st.bar_chart(cust)
 
-        # =========================
-        # 🔹 PARETO
-        # =========================
-        if "Party" in df.columns:
-
             st.subheader("🏭 Supplier Pareto")
-            sup_p = df[df["Received"] > 0].groupby("Party")["Purchase Value"].sum().sort_values(ascending=False)
-            st.bar_chart(sup_p)
+            st.bar_chart(df[df["Received"] > 0].groupby("Party")["Purchase Value"].sum().sort_values(ascending=False))
 
             st.subheader("🧾 Customer Pareto")
-            cust_p = df[df["Issued"] > 0].groupby("Party")["Sales Value"].sum().sort_values(ascending=False)
-            st.bar_chart(cust_p)
+            st.bar_chart(df[df["Issued"] > 0].groupby("Party")["Sales Value"].sum().sort_values(ascending=False))
 
         # =========================
-        # 🔹 SKU
+        # 🔹 SKU ANALYSIS
         # =========================
         if "SKU" in df.columns:
             st.subheader("📦 SKU Analysis")
@@ -243,9 +310,6 @@ if uploaded_file:
 
         st.metric("Cash Inflow", int((df["Issued"] * df["Rate"]).sum()))
         st.metric("Cash Outflow", int((df["Received"] * df["Rate"]).sum()))
-
-        if st.checkbox("Show Data"):
-            st.dataframe(daily)
 
     except Exception as e:
         st.error(str(e))
