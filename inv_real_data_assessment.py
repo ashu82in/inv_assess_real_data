@@ -12,6 +12,17 @@ uploaded_file = st.file_uploader("Upload Transaction File", type=["xlsx"])
 if uploaded_file:
     try:
         # =========================
+        # 🎯 POLICY INPUTS (TOP)
+        # =========================
+        st.subheader("🎯 Inventory Policy Inputs")
+
+        colA, colB, colC = st.columns(3)
+
+        lead_time = colA.number_input("Lead Time (days)", value=3)
+        service_level = colB.slider("Service Level (%)", 80, 99, 95)
+        dead_days = colC.number_input("Dead Stock Threshold (days)", value=90)
+
+        # =========================
         # LOAD DATA
         # =========================
         df = pd.read_excel(uploaded_file, engine="openpyxl")
@@ -45,18 +56,13 @@ if uploaded_file:
         df = df.sort_values("Date").reset_index(drop=True)
 
         # =========================
-        # SETTINGS
+        # SETTINGS (SIDEBAR)
         # =========================
-        st.sidebar.header("⚙️ Settings")
+        st.sidebar.header("⚙️ Additional Settings")
 
         opening_inventory = st.sidebar.number_input("Opening Inventory Value", value=0)
         opening_age_days = st.sidebar.number_input("Opening Inventory Age (days)", value=30)
-        stockout_threshold = st.sidebar.number_input("Stock-out Threshold", value=0)
         reorder_point_manual = st.sidebar.number_input("Manual Reorder Point", value=0)
-
-        lead_time = st.sidebar.number_input("Lead Time (days)", value=3)
-        service_level = st.sidebar.slider("Service Level (%)", 80, 99, 95)
-        dead_days = st.sidebar.number_input("Dead Stock Threshold (days)", value=90)
 
         st.sidebar.subheader("📦 Safety Stock Control")
         use_manual_ss = st.sidebar.checkbox("Use Manual Safety Stock")
@@ -169,7 +175,7 @@ if uploaded_file:
         daily["Dead Value"] = dead_list
 
         # =========================
-        # DEMAND + ROP
+        # DEMAND + SAFETY STOCK + ROP
         # =========================
         mean_demand = daily["Total Issued"].mean()
         std_demand = daily["Total Issued"].std()
@@ -193,7 +199,7 @@ if uploaded_file:
         daily["Sales Qty"] = -daily["Total Issued"]
 
         # =========================
-        # KPI DASHBOARD (2 ROWS)
+        # KPI DASHBOARD
         # =========================
         st.subheader("📊 Key Business Metrics")
 
@@ -205,13 +211,12 @@ if uploaded_file:
         c4.metric("Avg Demand", round(mean_demand, 1))
         c5.metric("Demand Variability", round(std_demand, 1))
 
-        # Calculations
+        # Row 2
         min_inventory = daily["Closing_Stock"].min()
         avg_age = daily["Avg Age"].mean()
         dead_stock = daily.iloc[-1]["Dead Value"]
         locked_pct = daily.iloc[-1]["Locked %"]
 
-        # Row 2
         c6, c7, c8, c9, c10 = st.columns(5)
         c6.metric("Min Inventory", int(min_inventory))
         c7.metric("Average Age", int(avg_age))
@@ -287,13 +292,13 @@ if uploaded_file:
 
             st.subheader("🏭 Supplier Purchase Trend")
             supplier_df = df[df["Received"] > 0].copy()
-            supplier_df["Value"] = supplier_df["Received"] * supplier_df["Rate"]
+            supplier_df["Value"] = supplier_df["Received"] * df["Rate"]
             sup = supplier_df.groupby(["Date", "Party"])["Value"].sum().unstack().fillna(0)
             st.bar_chart(sup)
 
             st.subheader("🧾 Customer Sales Trend")
             customer_df = df[df["Issued"] > 0].copy()
-            customer_df["Value"] = customer_df["Issued"] * customer_df["Rate"]
+            customer_df["Value"] = customer_df["Issued"] * df["Rate"]
             cust = customer_df.groupby(["Date", "Party"])["Value"].sum().unstack().fillna(0)
             st.bar_chart(cust)
 
