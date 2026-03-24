@@ -64,7 +64,7 @@ if uploaded_file:
         df = df.sort_values("Date").reset_index(drop=True)
 
         # =========================
-        # VALUE
+        # VALUE CALCULATION
         # =========================
         df["Net Qty"] = df["Received"] - df["Issued"]
         df["Net Value"] = df["Net Qty"] * df["Rate"]
@@ -173,7 +173,7 @@ if uploaded_file:
         # ROP
         # =========================
         mean_demand = daily["Total Issued"].mean()
-        std_demand = daily["Total Issed"].std()
+        std_demand = daily["Total Issued"].std()
         z = norm.ppf(service_level / 100)
 
         calc_ss = z * std_demand * np.sqrt(lead_time)
@@ -181,6 +181,17 @@ if uploaded_file:
 
         rop = (mean_demand * lead_time) + safety_stock
         daily["ROP"] = rop
+
+        # =========================
+        # WORKING CAPITAL
+        # =========================
+        daily["Locked %"] = (daily["Dead Value"] / daily["Inventory Value"]) * 100
+
+        # =========================
+        # PURCHASE / SALES
+        # =========================
+        daily["Purchase Qty"] = daily["Total Received"]
+        daily["Sales Qty"] = -daily["Total Issued"]
 
         # =========================
         # KPI
@@ -198,31 +209,59 @@ if uploaded_file:
         c6.metric("Min Inventory", int(daily["Closing_Stock"].min()))
         c7.metric("Average Age", int(daily["Avg Age"].mean()))
         c8.metric("Dead Stock ₹", int(daily.iloc[-1]["Dead Value"]))
-        c9.metric("Locked %", round((daily.iloc[-1]["Dead Value"] / daily.iloc[-1]["Inventory Value"]) * 100, 1))
+        c9.metric("Locked %", round(daily.iloc[-1]["Locked %"], 1))
         c10.metric("Service Level (%)", int(service_level))
 
         # =========================
-        # INVENTORY CHART
+        # INVENTORY QUANTITY
         # =========================
         st.subheader("📦 Inventory Quantity")
-        st.line_chart(daily.set_index("Date")["Closing_Stock"])
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=daily["Date"], y=daily["Closing_Stock"], name="Stock"))
+        fig.add_trace(go.Scatter(x=daily["Date"], y=[rop]*len(daily), name="Stat ROP",
+                                 line=dict(color="purple", dash="dot")))
+        fig.add_trace(go.Scatter(x=daily["Date"], y=[reorder_point_manual]*len(daily),
+                                 name="Manual ROP", line=dict(dash="dash")))
+
+        st.plotly_chart(fig, use_container_width=True)
 
         # =========================
-        # VALUE CHART
+        # INVENTORY VALUE
         # =========================
         st.subheader("💰 Inventory Value")
         st.line_chart(daily.set_index("Date")["Inventory Value"])
 
         # =========================
-        # AGE CHART
+        # AGE GRAPH (DUAL AXIS)
         # =========================
         st.subheader("⏳ Inventory Age")
 
         fig_age = go.Figure()
-        fig_age.add_trace(go.Scatter(x=daily["Date"], y=daily["Avg Age"], name="Age"))
 
-        fig_age.add_trace(go.Bar(x=daily["Date"], y=daily["Total Received"], name="Purchases"))
-        fig_age.add_trace(go.Bar(x=daily["Date"], y=-daily["Total Issued"], name="Sales"))
+        fig_age.add_trace(go.Scatter(
+            x=daily["Date"], y=daily["Avg Age"],
+            name="Age", yaxis="y1"
+        ))
+
+        fig_age.add_trace(go.Bar(
+            x=daily["Date"], y=daily["Purchase Qty"],
+            name="Purchases", marker=dict(color="#006400"),
+            opacity=0.6, yaxis="y2"
+        ))
+
+        fig_age.add_trace(go.Bar(
+            x=daily["Date"], y=daily["Sales Qty"],
+            name="Sales", marker=dict(color="#8B0000"),
+            opacity=0.6, yaxis="y2"
+        ))
+
+        fig_age.update_layout(
+            template="plotly_dark",
+            barmode="relative",
+            yaxis=dict(title="Age"),
+            yaxis2=dict(overlaying="y", side="right", title="Movement")
+        )
 
         st.plotly_chart(fig_age, use_container_width=True)
 
@@ -230,6 +269,7 @@ if uploaded_file:
         # AGING BUCKETS
         # =========================
         st.subheader("📊 Aging Buckets")
+
         bucket_df = pd.DataFrame(bucket_data, columns=["Date", "0-30", "31-60", "61-90", "90+"])
         bucket_df.set_index("Date", inplace=True)
         st.bar_chart(bucket_df)
@@ -238,7 +278,37 @@ if uploaded_file:
         # HISTOGRAM
         # =========================
         st.subheader("📊 Inventory Distribution")
-        st.bar_chart(daily["Closing_Stock"])
+
+        fig_hist = go.Figure()
+        fig_hist.add_trace(go.Histogram(x=daily["Closing_Stock"], nbinsx=20))
+        fig_hist.add_vline(x=rop, line_dash="dot", line_color="purple")
+
+        st.plotly_chart(fig_hist, use_container_width=True)
+
+        # =========================
+        # SUPPLIER & CUSTOMER
+        # =========================
+        if "Party" in df.columns:
+
+            st.subheader("🏭 Supplier Purchase Trend")
+            supplier_df = df[df["Received"] > 0].copy()
+            supplier_df["Value"] = supplier_df["Received"] * supplier_df["Rate"]
+
+            sup = supplier_df.groupby(["Date", "Party"])["Value"].sum().unstack().fillna(0)
+            st.bar_chart(sup)
+
+            st.subheader("🧾 Customer Sales Trend")
+            customer_df = df[df["Issued"] > 0].copy()
+            customer_df["Value"] = customer_df["Issued"] * customer_df["Rate"]
+
+            cust = customer_df.groupby(["Date", "Party"])["Value"].sum().unstack().fillna(0)
+            st.bar_chart(cust)
+
+            st.subheader("🏭 Supplier Pareto")
+            st.bar_chart(supplier_df.groupby("Party")["Value"].sum().sort_values(ascending=False))
+
+            st.subheader("🧾 Customer Pareto")
+            st.bar_chart(customer_df.groupby("Party")["Value"].sum().sort_values(ascending=False))
 
     except Exception as e:
         st.error(str(e))
