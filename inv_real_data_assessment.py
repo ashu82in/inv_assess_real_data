@@ -58,6 +58,10 @@ if uploaded_file:
         service_level = st.sidebar.slider("Service Level (%)", 80, 99, 95)
         dead_days = st.sidebar.number_input("Dead Stock Threshold (days)", value=90)
 
+        st.sidebar.subheader("📦 Safety Stock Control")
+        use_manual_ss = st.sidebar.checkbox("Use Manual Safety Stock")
+        manual_ss = st.sidebar.number_input("Manual Safety Stock", value=0)
+
         # =========================
         # VALUE
         # =========================
@@ -165,13 +169,16 @@ if uploaded_file:
         daily["Dead Value"] = dead_list
 
         # =========================
-        # ROP
+        # 🔥 DEMAND + SAFETY STOCK + ROP
         # =========================
         mean_demand = daily["Total Issued"].mean()
         std_demand = daily["Total Issued"].std()
         z = norm.ppf(service_level / 100)
 
-        rop = (mean_demand * lead_time) + (z * std_demand * np.sqrt(lead_time))
+        calc_ss = z * std_demand * np.sqrt(lead_time)
+        safety_stock = manual_ss if use_manual_ss else calc_ss
+
+        rop = (mean_demand * lead_time) + safety_stock
         daily["ROP"] = rop
 
         # =========================
@@ -192,10 +199,10 @@ if uploaded_file:
 
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Inventory Value", int(daily.iloc[-1]["Inventory Value"]))
-        c2.metric("Reorder Point", int(rop))
-        c3.metric("Dead Stock ₹", int(daily.iloc[-1]["Dead Value"]))
-        c4.metric("Avg Age", int(daily.iloc[-1]["Avg Age"]))
-        c5.metric("Locked %", round(daily.iloc[-1]["Locked %"], 1))
+        c2.metric("Avg Demand", round(mean_demand, 1))
+        c3.metric("Demand Variability", round(std_demand, 1))
+        c4.metric("Safety Stock", int(safety_stock))
+        c5.metric("Reorder Point", int(rop))
 
         # =========================
         # INVENTORY QUANTITY
@@ -216,11 +223,7 @@ if uploaded_file:
         st.subheader("💰 Inventory Value")
 
         fig_val = go.Figure()
-        fig_val.add_trace(go.Scatter(
-            x=daily["Date"],
-            y=daily["Inventory Value"],
-            mode="lines+markers"
-        ))
+        fig_val.add_trace(go.Scatter(x=daily["Date"], y=daily["Inventory Value"]))
         st.plotly_chart(fig_val, use_container_width=True)
 
         # =========================
@@ -269,7 +272,7 @@ if uploaded_file:
         st.plotly_chart(fig_hist, use_container_width=True)
 
         # =========================
-        # SUPPLIER PURCHASE TREND
+        # SUPPLIER & CUSTOMER
         # =========================
         if "Party" in df.columns:
 
@@ -281,9 +284,6 @@ if uploaded_file:
             sup = supplier_df.groupby(["Date", "Party"])["Value"].sum().unstack().fillna(0)
             st.bar_chart(sup)
 
-            # =========================
-            # CUSTOMER SALES TREND
-            # =========================
             st.subheader("🧾 Customer Sales Trend")
 
             customer_df = df[df["Issued"] > 0].copy()
@@ -292,9 +292,6 @@ if uploaded_file:
             cust = customer_df.groupby(["Date", "Party"])["Value"].sum().unstack().fillna(0)
             st.bar_chart(cust)
 
-            # =========================
-            # PARETO
-            # =========================
             st.subheader("🏭 Supplier Pareto")
             st.bar_chart(supplier_df.groupby("Party")["Value"].sum().sort_values(ascending=False))
 
