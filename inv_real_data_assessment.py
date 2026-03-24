@@ -209,7 +209,7 @@ if uploaded_file:
         col6.metric("Reorder Days", int(reorder_days))
 
         # =========================
-        # 🔹 INVENTORY CHART (ENHANCED)
+        # 🔹 INVENTORY CHART (FIXED)
         # =========================
         st.subheader("📦 Inventory Quantity (with Movement)")
 
@@ -220,31 +220,39 @@ if uploaded_file:
             y=daily["Closing_Stock"],
             mode="lines+markers",
             name="Stock",
-            line=dict(width=3)
+            yaxis="y1"
         ))
 
         fig.add_trace(go.Bar(
             x=daily["Date"],
             y=daily["Net Movement"],
-            name="Net Movement",
-            opacity=0.3
+            name="Movement",
+            opacity=0.3,
+            yaxis="y2"
         ))
 
         fig.add_trace(go.Scatter(
             x=daily["Date"],
             y=[stockout_threshold]*len(daily),
             name="Stock-out",
-            line=dict(dash="dash", color="red")
+            line=dict(dash="dash"),
+            yaxis="y1"
         ))
 
         fig.add_trace(go.Scatter(
             x=daily["Date"],
             y=[reorder_point]*len(daily),
             name="Reorder",
-            line=dict(dash="dot", color="orange")
+            line=dict(dash="dot"),
+            yaxis="y1"
         ))
 
-        fig.update_layout(barmode="relative", template="simple_white")
+        fig.update_layout(
+            template="simple_white",
+            yaxis=dict(title="Inventory"),
+            yaxis2=dict(overlaying="y", side="right", title="Movement"),
+            barmode="relative"
+        )
 
         st.plotly_chart(fig, use_container_width=True)
 
@@ -262,18 +270,6 @@ if uploaded_file:
 
         st.subheader("💸 Working Capital Lock")
         st.line_chart(daily.set_index("Date")["Locked %"])
-
-        # =========================
-        # 🔹 REORDER ALERTS
-        # =========================
-        st.subheader("📦 Reorder Alerts")
-
-        reorder_df = daily[daily["Reorder Flag"]]
-
-        if not reorder_df.empty:
-            st.dataframe(reorder_df[["Date", "Closing_Stock"]])
-        else:
-            st.success("No reorder required")
 
     except Exception as e:
         st.error(str(e))
