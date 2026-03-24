@@ -176,7 +176,7 @@ if uploaded_file:
         daily["Inventory Value"] = daily["Inventory Value"].ffill().fillna(opening_inventory)
 
         # =========================
-        # 🔹 STOCK + REORDER
+        # 🔹 FLAGS
         # =========================
         daily["Stockout Flag"] = daily["Closing_Stock"] <= stockout_threshold
         daily["Reorder Flag"] = daily["Closing_Stock"] <= reorder_point
@@ -190,7 +190,7 @@ if uploaded_file:
         daily["Locked %"] = (daily["90+"] / daily["Inventory Value"]) * 100
 
         # =========================
-        # 🔹 PURCHASE & SALES
+        # 🔹 PURCHASE / SALES
         # =========================
         daily["Purchase Qty"] = daily["Total Received"]
         daily["Sales Qty"] = -daily["Total Issued"]
@@ -210,7 +210,31 @@ if uploaded_file:
         col6.metric("Reorder Days", int(reorder_days))
 
         # =========================
-        # 🔹 INVENTORY AGE GRAPH (FINAL)
+        # 🔹 INVENTORY QUANTITY
+        # =========================
+        st.subheader("📦 Inventory Quantity")
+
+        fig_qty = go.Figure()
+        fig_qty.add_trace(go.Scatter(x=daily["Date"], y=daily["Closing_Stock"], name="Stock"))
+        fig_qty.add_trace(go.Scatter(x=daily["Date"], y=[stockout_threshold]*len(daily), name="Stock-out", line=dict(dash="dash")))
+        fig_qty.add_trace(go.Scatter(x=daily["Date"], y=[reorder_point]*len(daily), name="Reorder", line=dict(dash="dot")))
+
+        st.plotly_chart(fig_qty, use_container_width=True)
+
+        # =========================
+        # 🔹 INVENTORY VALUE
+        # =========================
+        st.subheader("💰 Inventory Value")
+        st.line_chart(daily.set_index("Date")["Inventory Value"])
+
+        # =========================
+        # 🔹 WORKING CAPITAL
+        # =========================
+        st.subheader("💸 Working Capital Lock")
+        st.line_chart(daily.set_index("Date")["Locked %"])
+
+        # =========================
+        # 🔹 INVENTORY AGE (FINAL)
         # =========================
         st.subheader("⏳ Inventory Age (with Purchases & Sales)")
 
@@ -221,7 +245,6 @@ if uploaded_file:
             y=daily["Avg Age"],
             mode="lines+markers",
             name="Avg Age",
-            line=dict(width=3),
             yaxis="y1"
         ))
 
@@ -251,6 +274,12 @@ if uploaded_file:
         )
 
         st.plotly_chart(fig_age, use_container_width=True)
+
+        # =========================
+        # 🔹 AGING BUCKETS
+        # =========================
+        st.subheader("📊 Aging Buckets")
+        st.bar_chart(daily.set_index("Date")[["0-30", "31-60", "61-90", "90+"]])
 
     except Exception as e:
         st.error(str(e))
