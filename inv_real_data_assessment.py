@@ -17,13 +17,83 @@ if uploaded_file:
         df = pd.read_excel(uploaded_file)
 
         # =========================
+        # 🔹 CLEAN COLUMN NAMES
+        # =========================
+        df.columns = (
+            df.columns
+            .str.strip()
+            .str.replace("'", "")
+            .str.replace('"', "")
+            .str.lower()
+        )
+
+        st.write("Detected Columns:", list(df.columns))
+
+        # =========================
+        # 🔹 COLUMN ALIASES
+        # =========================
+        column_aliases = {
+            "date": ["date", "txn date", "transaction date"],
+            "particulars": ["particulars", "supplier", "vendor", "name"],
+            "received": ["received", "qty received", "purchase qty", "inward"],
+            "issued": ["issued", "qty issued", "sales qty", "outward"],
+            "value": ["value", "amount", "total"],
+            "closing_stock": ["closing stock", "closing", "balance", "stock"]
+        }
+
+        # =========================
+        # 🔹 AUTO MAPPING
+        # =========================
+        def auto_map_columns(df_columns, aliases):
+            mapping = {}
+            for key, possible_names in aliases.items():
+                for col in df_columns:
+                    if col in possible_names:
+                        mapping[key] = col
+                        break
+            return mapping
+
+        auto_mapping = auto_map_columns(df.columns, column_aliases)
+
+        # =========================
+        # 🔹 MAPPING UI
+        # =========================
+        st.subheader("🔧 Column Mapping")
+
+        final_mapping = {}
+
+        for field in column_aliases.keys():
+            default_value = auto_mapping.get(field)
+
+            final_mapping[field] = st.selectbox(
+                f"Select column for {field}",
+                options=df.columns,
+                index=df.columns.get_loc(default_value) if default_value in df.columns else 0
+            )
+
+        # Confirm mapping
+        if not st.button("✅ Confirm Mapping"):
+            st.stop()
+
+        # =========================
+        # 🔹 RENAME COLUMNS
+        # =========================
+        df = df.rename(columns={
+            final_mapping["date"]: "Date",
+            final_mapping["particulars"]: "Particulars",
+            final_mapping["received"]: "Received",
+            final_mapping["issued"]: "Issued",
+            final_mapping["value"]: "Value",
+            final_mapping["closing_stock"]: "Closing Stock"
+        })
+
+        # =========================
         # 🔹 VALIDATION
         # =========================
-        df.columns = df.columns.str.strip()
-
         required_cols = ["Date", "Particulars", "Received", "Issued", "Value", "Closing Stock"]
+
         if not all(col in df.columns for col in required_cols):
-            st.error(f"File must contain: {required_cols}")
+            st.error("Column mapping failed. Please check selections.")
             st.stop()
 
         # =========================
@@ -45,7 +115,6 @@ if uploaded_file:
 
         daily_summary["Net Movement"] = daily_summary["Received"] - daily_summary["Issued"]
 
-        # Closing stock = last entry of the day
         closing_stock_daily = df.groupby("Date")["Closing Stock"].last().reset_index()
 
         daily_summary = daily_summary.merge(closing_stock_daily, on="Date", how="left")
@@ -56,14 +125,11 @@ if uploaded_file:
             "Closing Stock": "Closing_Stock"
         }, inplace=True)
 
-        # =========================
-        # 🔹 OPTIONAL VIEW
-        # =========================
         if st.checkbox("Show Daily Summary Table"):
             st.dataframe(daily_summary)
 
         # =========================
-        # 🔹 CONSUMPTION CALCULATION
+        # 🔹 CONSUMPTION
         # =========================
         daily_summary["Consumption"] = daily_summary["Closing_Stock"].shift(1) - daily_summary["Closing_Stock"]
         daily_summary = daily_summary.dropna()
@@ -81,10 +147,10 @@ if uploaded_file:
         min_stock_input = st.sidebar.number_input("Minimum Safety Stock", value=int(min_stock))
 
         st.sidebar.header("📈 Forecast Settings")
-        forecast_days = st.sidebar.slider("Forecast Horizon (Days)", 7, 60, 30)
+        forecast_days = st.sidebar.slider("Forecast Horizon", 7, 60, 30)
 
         st.sidebar.header("🧪 What-If Simulator")
-        demand_change_pct = st.sidebar.slider("Change in Demand (%)", -50, 100, 0, 10)
+        demand_change_pct = st.sidebar.slider("Demand Change (%)", -50, 100, 0, 10)
 
         adjusted_consumption = avg_consumption * (1 + demand_change_pct / 100)
 
@@ -99,20 +165,8 @@ if uploaded_file:
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Current Stock", int(current_stock))
         col2.metric("Avg Daily Consumption", round(avg_consumption, 2))
-        col3.metric("Days of Inventory Left", int(days_left))
+        col3.metric("Days Left", int(days_left))
         col4.metric("Reorder Point", int(reorder_point))
-
-        # =========================
-        # 🔹 HEALTH
-        # =========================
-        st.subheader("🧠 Inventory Health")
-
-        if days_left < 5:
-            st.error("🚨 Critical: Stock will run out very soon!")
-        elif days_left < 10:
-            st.warning("⚠️ Inventory running low")
-        else:
-            st.success("✅ Healthy inventory")
 
         # =========================
         # 🔹 REORDER DECISION
@@ -122,9 +176,9 @@ if uploaded_file:
         if current_stock <= reorder_point:
             st.error("🚨 Reorder Now!")
         elif current_stock <= reorder_point * 1.5:
-            st.warning("⚠️ Approaching reorder level")
+            st.warning("⚠️ Approaching reorder")
         else:
-            st.success("✅ No immediate action required")
+            st.success("✅ No action needed")
 
         # =========================
         # 🔹 FORECAST
@@ -144,7 +198,6 @@ if uploaded_file:
             for i in range(1, forecast_days + 1)
         ]
 
-        # Stock-out detection
         stockout_date = None
         for i in range(len(forecast_df)):
             if forecast_df.iloc[i]["Forecast_Stock"] <= 0:
@@ -157,68 +210,55 @@ if uploaded_file:
             days_to_stockout = (stockout_date - last_date).days
             st.error(f"🚨 Stock-out in {days_to_stockout} days ({stockout_date.date()})")
         else:
-            st.success("✅ No stock-out risk in forecast period")
+            st.success("✅ No stock-out risk")
 
         # =========================
         # 🔹 CHART
         # =========================
-        st.subheader("📈 Stock Trend")
-
         fig = go.Figure()
 
-        # Actual
         fig.add_trace(go.Scatter(
             x=daily_summary["Date"],
             y=daily_summary["Closing_Stock"],
             mode="lines+markers",
-            name="Actual Stock"
+            name="Actual"
         ))
 
-        # Scenario forecast
         fig.add_trace(go.Scatter(
             x=forecast_df["Date"],
             y=forecast_df["Forecast_Stock"],
             mode="lines",
-            name="Scenario Forecast",
+            name="Scenario",
             line=dict(dash="dot")
         ))
 
-        # Base forecast
         fig.add_trace(go.Scatter(
             x=forecast_df["Date"],
             y=base_forecast,
             mode="lines",
-            name="Base Forecast",
+            name="Base",
             line=dict(dash="dash", color="gray")
         ))
 
-        # Reorder line
         fig.add_trace(go.Scatter(
             x=list(daily_summary["Date"]) + list(forecast_df["Date"]),
             y=[reorder_point] * (len(daily_summary) + len(forecast_df)),
             mode="lines",
-            name="Reorder Point",
+            name="Reorder",
             line=dict(dash="dash", color="blue")
         ))
 
-        # Zones
         zone_25 = min_stock_input * 0.25
         zone_75 = min_stock_input * 0.75
 
-        fig.add_shape(type="rect",
-            x0=daily_summary["Date"].min(), x1=forecast_df["Date"].max(),
-            y0=0, y1=zone_25,
-            fillcolor="red", opacity=0.2, line_width=0)
+        fig.add_shape(type="rect", x0=daily_summary["Date"].min(), x1=forecast_df["Date"].max(),
+                      y0=0, y1=zone_25, fillcolor="red", opacity=0.2, line_width=0)
 
-        fig.add_shape(type="rect",
-            x0=daily_summary["Date"].min(), x1=forecast_df["Date"].max(),
-            y0=zone_25, y1=zone_75,
-            fillcolor="orange", opacity=0.2, line_width=0)
+        fig.add_shape(type="rect", x0=daily_summary["Date"].min(), x1=forecast_df["Date"].max(),
+                      y0=zone_25, y1=zone_75, fillcolor="orange", opacity=0.2, line_width=0)
 
-        fig.add_shape(type="rect",
-            x0=daily_summary["Date"].min(), x1=forecast_df["Date"].max(),
-            y0=zone_75, y1=min_stock_input,
-            fillcolor="green", opacity=0.2, line_width=0)
+        fig.add_shape(type="rect", x0=daily_summary["Date"].min(), x1=forecast_df["Date"].max(),
+                      y0=zone_75, y1=min_stock_input, fillcolor="green", opacity=0.2, line_width=0)
 
         fig.update_layout(template="simple_white")
 
