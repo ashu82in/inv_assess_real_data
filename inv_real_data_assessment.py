@@ -96,6 +96,8 @@ if uploaded_file:
         # =========================
         df["Total Inventory"] = opening_inventory + df["Net Value Movement"].cumsum()
 
+        st.write(df)
+
         # =========================
         # 🔹 DAILY SUMMARY
         # =========================
