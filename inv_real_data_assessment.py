@@ -28,7 +28,7 @@ if uploaded_file:
         )
 
         # =========================
-        # 🔹 AUTO RENAME (NO USER INPUT)
+        # 🔹 AUTO RENAME (ROBUST)
         # =========================
         df = df.rename(columns={
             "date": "Date",
@@ -36,7 +36,8 @@ if uploaded_file:
             "received": "Received",
             "issued": "Issued",
             "value": "Value",
-            "closing stock": "Closing Stock"
+            "closing stock": "Closing Stock",
+            "balance": "Closing Stock"   # ✅ Handles your case
         })
 
         # =========================
@@ -74,7 +75,7 @@ if uploaded_file:
 
         daily_summary["Net Movement"] = daily_summary["Received"] - daily_summary["Issued"]
 
-        # Closing stock = last entry of the day
+        # Last transaction = closing stock
         closing_stock_daily = df.groupby("Date")["Closing Stock"].last().reset_index()
 
         daily_summary = daily_summary.merge(closing_stock_daily, on="Date", how="left")
@@ -86,7 +87,7 @@ if uploaded_file:
         }, inplace=True)
 
         # =========================
-        # 🔹 OPTIONAL TABLE
+        # 🔹 OPTIONAL VIEW
         # =========================
         if st.checkbox("Show Daily Summary"):
             st.dataframe(daily_summary)
@@ -108,7 +109,6 @@ if uploaded_file:
         current_stock = daily_summary.iloc[-1]["Closing_Stock"]
         min_stock = daily_summary["Closing_Stock"].min()
 
-        # Avoid division error
         if avg_consumption <= 0:
             avg_consumption = 0.0001
 
