@@ -10,12 +10,12 @@ uploaded_file = st.file_uploader("Upload Transaction File", type=["xlsx"])
 if uploaded_file:
     try:
         # =========================
-        # 🔹 READ FILE
+        # 🔹 LOAD DATA
         # =========================
         df = pd.read_excel(uploaded_file, engine="openpyxl")
 
         # =========================
-        # 🔹 CLEAN COLUMNS
+        # 🔹 CLEAN COLUMN NAMES
         # =========================
         df.columns = (
             df.columns.str.strip()
@@ -34,13 +34,12 @@ if uploaded_file:
             "issued": "Issued",
             "rate": "Rate",
             "closing stock": "Closing Stock",
-            "particulars": "Supplier",
+            "particulars": "Party",
             "sku": "SKU"
         }, inplace=True)
 
-        required_cols = ["Date", "Received", "Issued", "Closing Stock", "Rate"]
-
-        if not all(col in df.columns for col in required_cols):
+        required = ["Date", "Received", "Issued", "Closing Stock", "Rate"]
+        if not all(c in df.columns for c in required):
             st.error("Missing required columns")
             st.write(df.columns)
             st.stop()
@@ -60,7 +59,6 @@ if uploaded_file:
         # 🔹 SETTINGS
         # =========================
         st.sidebar.header("⚙️ Settings")
-
         opening_inventory = st.sidebar.number_input("Opening Inventory Value", value=0)
         stockout_threshold = st.sidebar.number_input("Stock-out Threshold", value=0)
         dead_days = st.sidebar.number_input("Dead Stock Threshold (days)", value=90)
@@ -72,19 +70,15 @@ if uploaded_file:
         df["Net Value"] = df["Net Qty"] * df["Rate"]
         df["Inventory Value"] = opening_inventory + df["Net Value"].cumsum()
 
-        # =========================
-        # 🔹 GROUPED DATA
-        # =========================
-        df_grouped = df.groupby("Date").agg({
-            "Received": "sum",
-            "Issued": "sum"
-        })
+        df["Purchase Value"] = df["Received"] * df["Rate"]
+        df["Sales Value"] = df["Issued"] * df["Rate"]
 
+        # =========================
+        # 🔹 DATE ENGINE
+        # =========================
+        df_grouped = df.groupby("Date").agg({"Received": "sum", "Issued": "sum"})
         full_dates = pd.date_range(df["Date"].min(), df["Date"].max())
 
-        # =========================
-        # 🔹 FIFO ENGINE
-        # =========================
         inventory_layers = []
         age_list, bucket_data, dead_list = [], [], []
 
@@ -125,9 +119,7 @@ if uploaded_file:
             if total_qty == 0:
                 age_list.append(0)
             else:
-                weighted_age = sum(
-                    l["qty"] * (current_date - l["date"]).days for l in inventory_layers
-                )
+                weighted_age = sum(l["qty"] * (current_date - l["date"]).days for l in inventory_layers)
                 age_list.append(weighted_age / total_qty)
 
             b1 = b2 = b3 = b4 = dead_val = 0
@@ -156,7 +148,7 @@ if uploaded_file:
         dead_df = pd.DataFrame({"Date": full_dates, "Dead Value": dead_list})
 
         # =========================
-        # 🔹 DAILY SUMMARY
+        # 🔹 DAILY
         # =========================
         daily = df.groupby("Date").agg({
             "Received": "sum",
@@ -176,14 +168,10 @@ if uploaded_file:
         daily = daily.merge(bucket_df, on="Date", how="left")
         daily = daily.merge(dead_df, on="Date", how="left")
 
-        # Fill missing
         daily["Closing_Stock"] = daily["Closing_Stock"].ffill().fillna(0)
         daily["Inventory Value"] = daily["Inventory Value"].ffill().fillna(opening_inventory)
         daily["Avg Age"] = daily["Avg Age"].ffill()
 
-        # =========================
-        # 🔹 WORKING CAPITAL
-        # =========================
         daily["Locked %"] = (daily["90+"] / daily["Inventory Value"]) * 100
 
         # =========================
@@ -200,61 +188,64 @@ if uploaded_file:
         # =========================
         # 🔹 CHARTS
         # =========================
+        st.subheader("📦 Inventory Quantity")
+        st.line_chart(daily.set_index("Date")["Closing_Stock"])
 
-        st.subheader("📦 Inventory Quantity Trend")
-        fig_qty = go.Figure()
-        fig_qty.add_trace(go.Scatter(x=daily["Date"], y=daily["Closing_Stock"]))
-        fig_qty.add_trace(go.Scatter(x=daily["Date"], y=[stockout_threshold]*len(daily), line=dict(dash="dash")))
-        st.plotly_chart(fig_qty, use_container_width=True)
+        st.subheader("💰 Inventory Value")
+        st.line_chart(daily.set_index("Date")["Inventory Value"])
 
-        st.subheader("💰 Inventory Value Trend")
-        fig_val = go.Figure()
-        fig_val.add_trace(go.Scatter(x=daily["Date"], y=daily["Inventory Value"]))
-        st.plotly_chart(fig_val, use_container_width=True)
+        st.subheader("💸 Working Capital Lock")
+        st.line_chart(daily.set_index("Date")["Locked %"])
 
-        st.subheader("💸 Working Capital Lock Trend")
-        fig_wc = go.Figure()
-        fig_wc.add_trace(go.Scatter(x=daily["Date"], y=daily["Locked %"]))
-        st.plotly_chart(fig_wc, use_container_width=True)
+        st.subheader("⏳ Inventory Age")
+        st.line_chart(daily.set_index("Date")["Avg Age"])
 
-        st.subheader("⏳ Inventory Age Trend")
-        fig_age = go.Figure()
-        fig_age.add_trace(go.Scatter(x=daily["Date"], y=daily["Avg Age"]))
-        st.plotly_chart(fig_age, use_container_width=True)
-
-        st.subheader("📊 Value Aging Buckets")
-        fig_bucket = go.Figure()
-        fig_bucket.add_bar(x=daily["Date"], y=daily["0-30"], name="0-30")
-        fig_bucket.add_bar(x=daily["Date"], y=daily["31-60"], name="31-60")
-        fig_bucket.add_bar(x=daily["Date"], y=daily["61-90"], name="61-90")
-        fig_bucket.add_bar(x=daily["Date"], y=daily["90+"], name="90+")
-        fig_bucket.update_layout(barmode="stack")
-        st.plotly_chart(fig_bucket, use_container_width=True)
+        st.subheader("📊 Aging Buckets")
+        st.bar_chart(daily.set_index("Date")[["0-30", "31-60", "61-90", "90+"]])
 
         # =========================
-        # 🔹 ANALYSIS
+        # 🔹 SUPPLIER VS CUSTOMER
+        # =========================
+        if "Party" in df.columns:
+
+            st.subheader("🏭 Purchases by Supplier")
+            sup = df[df["Received"] > 0].groupby(["Date", "Party"])["Purchase Value"].sum().unstack().fillna(0)
+            st.bar_chart(sup)
+
+            st.subheader("🧾 Sales by Customer")
+            cust = df[df["Issued"] > 0].groupby(["Date", "Party"])["Sales Value"].sum().unstack().fillna(0)
+            st.bar_chart(cust)
+
+        # =========================
+        # 🔹 PARETO
+        # =========================
+        if "Party" in df.columns:
+
+            st.subheader("🏭 Supplier Pareto")
+            sup_p = df[df["Received"] > 0].groupby("Party")["Purchase Value"].sum().sort_values(ascending=False)
+            st.bar_chart(sup_p)
+
+            st.subheader("🧾 Customer Pareto")
+            cust_p = df[df["Issued"] > 0].groupby("Party")["Sales Value"].sum().sort_values(ascending=False)
+            st.bar_chart(cust_p)
+
+        # =========================
+        # 🔹 SKU
         # =========================
         if "SKU" in df.columns:
             st.subheader("📦 SKU Analysis")
             st.dataframe(df.groupby("SKU")["Net Value"].sum().reset_index())
-
-        if "Supplier" in df.columns:
-            st.subheader("🏭 Supplier Analysis")
-            st.dataframe(df.groupby("Supplier")["Net Value"].sum().reset_index())
 
         # =========================
         # 🔹 CASH FLOW
         # =========================
         st.subheader("💸 Cash Flow")
 
-        cash_in = (df["Issued"] * df["Rate"]).sum()
-        cash_out = (df["Received"] * df["Rate"]).sum()
-
-        st.metric("Cash Inflow", int(cash_in))
-        st.metric("Cash Outflow", int(cash_out))
+        st.metric("Cash Inflow", int((df["Issued"] * df["Rate"]).sum()))
+        st.metric("Cash Outflow", int((df["Received"] * df["Rate"]).sum()))
 
         if st.checkbox("Show Data"):
             st.dataframe(daily)
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(str(e))
