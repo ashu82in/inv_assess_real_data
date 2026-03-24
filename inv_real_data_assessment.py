@@ -39,7 +39,7 @@ if uploaded_file:
             # "closing stock": "Closing Stock",
             "balance": "Closing Stock"   # ✅ Handles your case
         })
-
+        st.write(df)
         # =========================
         # 🔹 VALIDATION
         # =========================
