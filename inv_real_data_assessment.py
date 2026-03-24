@@ -24,22 +24,27 @@ if uploaded_file:
             .str.strip()
             .str.replace("'", "", regex=False)
             .str.replace('"', "", regex=False)
+            .str.replace("_", " ")   # handles closing_stock
             .str.lower()
         )
 
         # =========================
-        # 🔹 AUTO RENAME (ROBUST)
+        # 🔹 STANDARDIZE COLUMN NAMES
         # =========================
-        df = df.rename(columns={
+        # Balance → Closing Stock
+        if "balance" in df.columns:
+            df.rename(columns={"balance": "Closing Stock"}, inplace=True)
+
+        # Other columns
+        df.rename(columns={
             "date": "Date",
             "particulars": "Particulars",
             "received": "Received",
             "issued": "Issued",
             "value": "Value",
-            # "closing stock": "Closing Stock",
-            "balance": "Closing Stock"   # ✅ Handles your case
-        })
-        st.write(df)
+            "closing stock": "Closing Stock"
+        }, inplace=True)
+
         # =========================
         # 🔹 VALIDATION
         # =========================
@@ -48,6 +53,7 @@ if uploaded_file:
         missing = [col for col in required_cols if col not in df.columns]
         if missing:
             st.error(f"Missing columns: {missing}")
+            st.write("Detected columns:", df.columns.tolist())
             st.stop()
 
         # =========================
@@ -75,7 +81,7 @@ if uploaded_file:
 
         daily_summary["Net Movement"] = daily_summary["Received"] - daily_summary["Issued"]
 
-        # Last transaction = closing stock
+        # Last transaction of day = closing stock
         closing_stock_daily = df.groupby("Date")["Closing Stock"].last().reset_index()
 
         daily_summary = daily_summary.merge(closing_stock_daily, on="Date", how="left")
@@ -87,7 +93,7 @@ if uploaded_file:
         }, inplace=True)
 
         # =========================
-        # 🔹 OPTIONAL VIEW
+        # 🔹 OPTIONAL TABLE
         # =========================
         if st.checkbox("Show Daily Summary"):
             st.dataframe(daily_summary)
