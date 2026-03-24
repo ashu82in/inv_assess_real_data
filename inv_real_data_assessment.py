@@ -84,19 +84,13 @@ if uploaded_file:
         )
 
         # =========================
-        # 🔹 VALUE CALCULATION
+        # 🔹 VALUE LOGIC (CORRECT)
         # =========================
-        df["Purchase Value"] = df["Received"] * df["Rate"]
-        df["Sales Value"] = df["Issued"] * df["Rate"]
+        df["Net Quantity Movement"] = df["Received"] - df["Issued"]
+        df["Net Value Movement"] = df["Net Quantity Movement"] * df["Rate"]
 
-        df["Net Value Movement"] = df["Purchase Value"] - df["Sales Value"]
-
-        # =========================
-        # 🔹 RUNNING INVENTORY VALUE
-        # =========================
+        # Running inventory value
         df["Total Inventory"] = opening_inventory + df["Net Value Movement"].cumsum()
-
-        st.write(df)
 
         # =========================
         # 🔹 DAILY SUMMARY
@@ -118,7 +112,7 @@ if uploaded_file:
         }, inplace=True)
 
         # =========================
-        # 🔹 QUANTITY (CLOSING STOCK)
+        # 🔹 CLOSING STOCK
         # =========================
         closing_stock_daily = df.groupby("Date")["Closing Stock"].last().reset_index()
 
@@ -127,6 +121,31 @@ if uploaded_file:
         daily_summary.rename(columns={
             "Closing Stock": "Closing_Stock"
         }, inplace=True)
+
+        # =========================
+        # 🔹 HANDLE MISSING DATES
+        # =========================
+        full_dates = pd.date_range(
+            start=daily_summary["Date"].min(),
+            end=daily_summary["Date"].max()
+        )
+
+        full_df = pd.DataFrame({"Date": full_dates})
+
+        daily_summary = full_df.merge(daily_summary, on="Date", how="left")
+
+        # Fill no-transaction days
+        daily_summary["Total Received"] = daily_summary["Total Received"].fillna(0)
+        daily_summary["Total Issued"] = daily_summary["Total Issued"].fillna(0)
+        daily_summary["Net Movement"] = daily_summary["Net Movement"].fillna(0)
+
+        # Carry forward stock & value
+        daily_summary["Closing_Stock"] = daily_summary["Closing_Stock"].ffill()
+        daily_summary["Inventory_Value"] = daily_summary["Inventory_Value"].ffill()
+
+        # Edge case handling
+        daily_summary["Closing_Stock"] = daily_summary["Closing_Stock"].fillna(0)
+        daily_summary["Inventory_Value"] = daily_summary["Inventory_Value"].fillna(opening_inventory)
 
         # =========================
         # 🔹 CONSUMPTION
