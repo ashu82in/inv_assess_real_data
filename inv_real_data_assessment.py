@@ -169,7 +169,7 @@ if uploaded_file:
         daily["Dead Value"] = dead_list
 
         # =========================
-        # 🔥 DEMAND + SAFETY STOCK + ROP
+        # DEMAND + ROP
         # =========================
         mean_demand = daily["Total Issued"].mean()
         std_demand = daily["Total Issued"].std()
@@ -193,16 +193,31 @@ if uploaded_file:
         daily["Sales Qty"] = -daily["Total Issued"]
 
         # =========================
-        # METRICS
+        # KPI DASHBOARD (2 ROWS)
         # =========================
-        st.subheader("📌 Key Metrics")
+        st.subheader("📊 Key Business Metrics")
 
+        # Row 1
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Inventory Value", int(daily.iloc[-1]["Inventory Value"]))
-        c2.metric("Avg Demand", round(mean_demand, 1))
-        c3.metric("Demand Variability", round(std_demand, 1))
-        c4.metric("Safety Stock", int(safety_stock))
-        c5.metric("Reorder Point", int(rop))
+        c2.metric("Reorder Point", int(rop))
+        c3.metric("Safety Stock", int(safety_stock))
+        c4.metric("Avg Demand", round(mean_demand, 1))
+        c5.metric("Demand Variability", round(std_demand, 1))
+
+        # Calculations
+        min_inventory = daily["Closing_Stock"].min()
+        avg_age = daily["Avg Age"].mean()
+        dead_stock = daily.iloc[-1]["Dead Value"]
+        locked_pct = daily.iloc[-1]["Locked %"]
+
+        # Row 2
+        c6, c7, c8, c9, c10 = st.columns(5)
+        c6.metric("Min Inventory", int(min_inventory))
+        c7.metric("Average Age", int(avg_age))
+        c8.metric("Dead Stock ₹", int(dead_stock))
+        c9.metric("Locked %", round(locked_pct, 1))
+        c10.metric("Service Level (%)", int(service_level))
 
         # =========================
         # INVENTORY QUANTITY
@@ -221,10 +236,7 @@ if uploaded_file:
         # INVENTORY VALUE
         # =========================
         st.subheader("💰 Inventory Value")
-
-        fig_val = go.Figure()
-        fig_val.add_trace(go.Scatter(x=daily["Date"], y=daily["Inventory Value"]))
-        st.plotly_chart(fig_val, use_container_width=True)
+        st.line_chart(daily.set_index("Date")["Inventory Value"])
 
         # =========================
         # INVENTORY AGE
@@ -232,7 +244,6 @@ if uploaded_file:
         st.subheader("⏳ Inventory Age")
 
         fig_age = go.Figure()
-
         fig_age.add_trace(go.Scatter(x=daily["Date"], y=daily["Avg Age"], name="Age", yaxis="y1"))
 
         fig_age.add_trace(go.Bar(x=daily["Date"], y=daily["Purchase Qty"],
@@ -254,10 +265,8 @@ if uploaded_file:
         # AGING BUCKETS
         # =========================
         st.subheader("📊 Aging Buckets")
-
         bucket_df = pd.DataFrame(bucket_data, columns=["Date", "0-30", "31-60", "61-90", "90+"])
         bucket_df.set_index("Date", inplace=True)
-
         st.bar_chart(bucket_df)
 
         # =========================
@@ -277,18 +286,14 @@ if uploaded_file:
         if "Party" in df.columns:
 
             st.subheader("🏭 Supplier Purchase Trend")
-
             supplier_df = df[df["Received"] > 0].copy()
             supplier_df["Value"] = supplier_df["Received"] * supplier_df["Rate"]
-
             sup = supplier_df.groupby(["Date", "Party"])["Value"].sum().unstack().fillna(0)
             st.bar_chart(sup)
 
             st.subheader("🧾 Customer Sales Trend")
-
             customer_df = df[df["Issued"] > 0].copy()
             customer_df["Value"] = customer_df["Issued"] * customer_df["Rate"]
-
             cust = customer_df.groupby(["Date", "Party"])["Value"].sum().unstack().fillna(0)
             st.bar_chart(cust)
 
