@@ -12,15 +12,23 @@ uploaded_file = st.file_uploader("Upload Transaction File", type=["xlsx"])
 if uploaded_file:
     try:
         # =========================
-        # 🎯 POLICY INPUTS (TOP)
+        # 🔧 SIDEBAR INPUTS
         # =========================
-        st.subheader("🎯 Inventory Policy Inputs")
+        st.sidebar.header("🎯 Inventory Policy Inputs")
 
-        colA, colB, colC = st.columns(3)
+        lead_time = st.sidebar.number_input("Lead Time (days)", value=3)
+        service_level = st.sidebar.slider("Service Level (%)", 80, 99, 95)
+        dead_days = st.sidebar.number_input("Dead Stock Threshold (days)", value=90)
 
-        lead_time = colA.number_input("Lead Time (days)", value=3)
-        service_level = colB.slider("Service Level (%)", 80, 99, 95)
-        dead_days = colC.number_input("Dead Stock Threshold (days)", value=90)
+        st.sidebar.header("⚙️ Additional Settings")
+
+        opening_inventory = st.sidebar.number_input("Opening Inventory Value", value=0)
+        opening_age_days = st.sidebar.number_input("Opening Inventory Age (days)", value=30)
+        reorder_point_manual = st.sidebar.number_input("Manual Reorder Point", value=0)
+
+        st.sidebar.subheader("📦 Safety Stock Control")
+        use_manual_ss = st.sidebar.checkbox("Use Manual Safety Stock")
+        manual_ss = st.sidebar.number_input("Manual Safety Stock", value=0)
 
         # =========================
         # LOAD DATA
@@ -54,19 +62,6 @@ if uploaded_file:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
         df = df.sort_values("Date").reset_index(drop=True)
-
-        # =========================
-        # SETTINGS (SIDEBAR)
-        # =========================
-        st.sidebar.header("⚙️ Additional Settings")
-
-        opening_inventory = st.sidebar.number_input("Opening Inventory Value", value=0)
-        opening_age_days = st.sidebar.number_input("Opening Inventory Age (days)", value=30)
-        reorder_point_manual = st.sidebar.number_input("Manual Reorder Point", value=0)
-
-        st.sidebar.subheader("📦 Safety Stock Control")
-        use_manual_ss = st.sidebar.checkbox("Use Manual Safety Stock")
-        manual_ss = st.sidebar.number_input("Manual Safety Stock", value=0)
 
         # =========================
         # VALUE
@@ -175,10 +170,10 @@ if uploaded_file:
         daily["Dead Value"] = dead_list
 
         # =========================
-        # DEMAND + SAFETY STOCK + ROP
+        # ROP
         # =========================
         mean_demand = daily["Total Issued"].mean()
-        std_demand = daily["Total Issued"].std()
+        std_demand = daily["Total Issed"].std()
         z = norm.ppf(service_level / 100)
 
         calc_ss = z * std_demand * np.sqrt(lead_time)
@@ -188,22 +183,10 @@ if uploaded_file:
         daily["ROP"] = rop
 
         # =========================
-        # WORKING CAPITAL
-        # =========================
-        daily["Locked %"] = (daily["Dead Value"] / daily["Inventory Value"]) * 100
-
-        # =========================
-        # PURCHASE / SALES
-        # =========================
-        daily["Purchase Qty"] = daily["Total Received"]
-        daily["Sales Qty"] = -daily["Total Issued"]
-
-        # =========================
-        # KPI DASHBOARD
+        # KPI
         # =========================
         st.subheader("📊 Key Business Metrics")
 
-        # Row 1
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Inventory Value", int(daily.iloc[-1]["Inventory Value"]))
         c2.metric("Reorder Point", int(rop))
@@ -211,58 +194,35 @@ if uploaded_file:
         c4.metric("Avg Demand", round(mean_demand, 1))
         c5.metric("Demand Variability", round(std_demand, 1))
 
-        # Row 2
-        min_inventory = daily["Closing_Stock"].min()
-        avg_age = daily["Avg Age"].mean()
-        dead_stock = daily.iloc[-1]["Dead Value"]
-        locked_pct = daily.iloc[-1]["Locked %"]
-
         c6, c7, c8, c9, c10 = st.columns(5)
-        c6.metric("Min Inventory", int(min_inventory))
-        c7.metric("Average Age", int(avg_age))
-        c8.metric("Dead Stock ₹", int(dead_stock))
-        c9.metric("Locked %", round(locked_pct, 1))
+        c6.metric("Min Inventory", int(daily["Closing_Stock"].min()))
+        c7.metric("Average Age", int(daily["Avg Age"].mean()))
+        c8.metric("Dead Stock ₹", int(daily.iloc[-1]["Dead Value"]))
+        c9.metric("Locked %", round((daily.iloc[-1]["Dead Value"] / daily.iloc[-1]["Inventory Value"]) * 100, 1))
         c10.metric("Service Level (%)", int(service_level))
 
         # =========================
-        # INVENTORY QUANTITY
+        # INVENTORY CHART
         # =========================
         st.subheader("📦 Inventory Quantity")
-
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=daily["Date"], y=daily["Closing_Stock"], name="Stock"))
-        fig.add_trace(go.Scatter(x=daily["Date"], y=[rop]*len(daily),
-                                 name="Stat ROP", line=dict(color="purple", dash="dot")))
-        fig.add_trace(go.Scatter(x=daily["Date"], y=[reorder_point_manual]*len(daily),
-                                 name="Manual ROP", line=dict(dash="dash")))
-        st.plotly_chart(fig, use_container_width=True)
+        st.line_chart(daily.set_index("Date")["Closing_Stock"])
 
         # =========================
-        # INVENTORY VALUE
+        # VALUE CHART
         # =========================
         st.subheader("💰 Inventory Value")
         st.line_chart(daily.set_index("Date")["Inventory Value"])
 
         # =========================
-        # INVENTORY AGE
+        # AGE CHART
         # =========================
         st.subheader("⏳ Inventory Age")
 
         fig_age = go.Figure()
-        fig_age.add_trace(go.Scatter(x=daily["Date"], y=daily["Avg Age"], name="Age", yaxis="y1"))
+        fig_age.add_trace(go.Scatter(x=daily["Date"], y=daily["Avg Age"], name="Age"))
 
-        fig_age.add_trace(go.Bar(x=daily["Date"], y=daily["Purchase Qty"],
-                                 name="Purchases", marker=dict(color="#006400"), opacity=0.6, yaxis="y2"))
-
-        fig_age.add_trace(go.Bar(x=daily["Date"], y=daily["Sales Qty"],
-                                 name="Sales", marker=dict(color="#8B0000"), opacity=0.6, yaxis="y2"))
-
-        fig_age.update_layout(
-            template="plotly_dark",
-            barmode="relative",
-            yaxis=dict(title="Age"),
-            yaxis2=dict(overlaying="y", side="right", title="Movement")
-        )
+        fig_age.add_trace(go.Bar(x=daily["Date"], y=daily["Total Received"], name="Purchases"))
+        fig_age.add_trace(go.Bar(x=daily["Date"], y=-daily["Total Issued"], name="Sales"))
 
         st.plotly_chart(fig_age, use_container_width=True)
 
@@ -278,35 +238,7 @@ if uploaded_file:
         # HISTOGRAM
         # =========================
         st.subheader("📊 Inventory Distribution")
-
-        fig_hist = go.Figure()
-        fig_hist.add_trace(go.Histogram(x=daily["Closing_Stock"], nbinsx=20))
-        fig_hist.add_vline(x=rop, line_dash="dot", line_color="purple")
-
-        st.plotly_chart(fig_hist, use_container_width=True)
-
-        # =========================
-        # SUPPLIER & CUSTOMER
-        # =========================
-        if "Party" in df.columns:
-
-            st.subheader("🏭 Supplier Purchase Trend")
-            supplier_df = df[df["Received"] > 0].copy()
-            supplier_df["Value"] = supplier_df["Received"] * df["Rate"]
-            sup = supplier_df.groupby(["Date", "Party"])["Value"].sum().unstack().fillna(0)
-            st.bar_chart(sup)
-
-            st.subheader("🧾 Customer Sales Trend")
-            customer_df = df[df["Issued"] > 0].copy()
-            customer_df["Value"] = customer_df["Issued"] * df["Rate"]
-            cust = customer_df.groupby(["Date", "Party"])["Value"].sum().unstack().fillna(0)
-            st.bar_chart(cust)
-
-            st.subheader("🏭 Supplier Pareto")
-            st.bar_chart(supplier_df.groupby("Party")["Value"].sum().sort_values(ascending=False))
-
-            st.subheader("🧾 Customer Pareto")
-            st.bar_chart(customer_df.groupby("Party")["Value"].sum().sort_values(ascending=False))
+        st.bar_chart(daily["Closing_Stock"])
 
     except Exception as e:
         st.error(str(e))
