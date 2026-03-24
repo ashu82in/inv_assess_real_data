@@ -219,8 +219,7 @@ if uploaded_file:
         fig_val.add_trace(go.Scatter(
             x=daily["Date"],
             y=daily["Inventory Value"],
-            mode="lines+markers",
-            name="Inventory Value"
+            mode="lines+markers"
         ))
         st.plotly_chart(fig_val, use_container_width=True)
 
@@ -231,22 +230,13 @@ if uploaded_file:
 
         fig_age = go.Figure()
 
-        fig_age.add_trace(go.Scatter(
-            x=daily["Date"], y=daily["Avg Age"],
-            name="Age", yaxis="y1"
-        ))
+        fig_age.add_trace(go.Scatter(x=daily["Date"], y=daily["Avg Age"], name="Age", yaxis="y1"))
 
-        fig_age.add_trace(go.Bar(
-            x=daily["Date"], y=daily["Purchase Qty"],
-            name="Purchases", marker=dict(color="#006400"),
-            opacity=0.6, yaxis="y2"
-        ))
+        fig_age.add_trace(go.Bar(x=daily["Date"], y=daily["Purchase Qty"],
+                                 name="Purchases", marker=dict(color="#006400"), opacity=0.6, yaxis="y2"))
 
-        fig_age.add_trace(go.Bar(
-            x=daily["Date"], y=daily["Sales Qty"],
-            name="Sales", marker=dict(color="#8B0000"),
-            opacity=0.6, yaxis="y2"
-        ))
+        fig_age.add_trace(go.Bar(x=daily["Date"], y=daily["Sales Qty"],
+                                 name="Sales", marker=dict(color="#8B0000"), opacity=0.6, yaxis="y2"))
 
         fig_age.update_layout(
             template="plotly_dark",
@@ -279,15 +269,37 @@ if uploaded_file:
         st.plotly_chart(fig_hist, use_container_width=True)
 
         # =========================
-        # SUPPLIER / CUSTOMER
+        # SUPPLIER PURCHASE TREND
         # =========================
         if "Party" in df.columns:
 
+            st.subheader("🏭 Supplier Purchase Trend")
+
+            supplier_df = df[df["Received"] > 0].copy()
+            supplier_df["Value"] = supplier_df["Received"] * supplier_df["Rate"]
+
+            sup = supplier_df.groupby(["Date", "Party"])["Value"].sum().unstack().fillna(0)
+            st.bar_chart(sup)
+
+            # =========================
+            # CUSTOMER SALES TREND
+            # =========================
+            st.subheader("🧾 Customer Sales Trend")
+
+            customer_df = df[df["Issued"] > 0].copy()
+            customer_df["Value"] = customer_df["Issued"] * customer_df["Rate"]
+
+            cust = customer_df.groupby(["Date", "Party"])["Value"].sum().unstack().fillna(0)
+            st.bar_chart(cust)
+
+            # =========================
+            # PARETO
+            # =========================
             st.subheader("🏭 Supplier Pareto")
-            st.bar_chart(df[df["Received"] > 0].groupby("Party")["Received"].sum())
+            st.bar_chart(supplier_df.groupby("Party")["Value"].sum().sort_values(ascending=False))
 
             st.subheader("🧾 Customer Pareto")
-            st.bar_chart(df[df["Issued"] > 0].groupby("Party")["Issued"].sum())
+            st.bar_chart(customer_df.groupby("Party")["Value"].sum().sort_values(ascending=False))
 
     except Exception as e:
         st.error(str(e))
