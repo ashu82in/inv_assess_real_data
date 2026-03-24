@@ -54,7 +54,6 @@ if uploaded_file:
         stockout_threshold = st.sidebar.number_input("Stock-out Threshold", value=0)
         reorder_point_manual = st.sidebar.number_input("Manual Reorder Point", value=0)
 
-        # 🔥 NEW (ADDED)
         lead_time = st.sidebar.number_input("Lead Time (days)", value=3)
         service_level = st.sidebar.slider("Service Level (%)", 80, 99, 95)
         dead_days = st.sidebar.number_input("Dead Stock Threshold (days)", value=90)
@@ -73,7 +72,7 @@ if uploaded_file:
         df_grouped = df.groupby("Date").agg({"Received": "sum", "Issued": "sum"})
 
         # =========================
-        # FIFO ENGINE (UNCHANGED CORE)
+        # FIFO ENGINE
         # =========================
         inventory_layers = []
         age_list, bucket_data, dead_list = [], [], []
@@ -166,7 +165,7 @@ if uploaded_file:
         daily["Dead Value"] = dead_list
 
         # =========================
-        # 🔥 ROP (ADDED CORRECTLY)
+        # ROP
         # =========================
         mean_demand = daily["Total Issued"].mean()
         std_demand = daily["Total Issued"].std()
@@ -199,7 +198,7 @@ if uploaded_file:
         c5.metric("Locked %", round(daily.iloc[-1]["Locked %"], 1))
 
         # =========================
-        # INVENTORY
+        # INVENTORY CHART
         # =========================
         st.subheader("📦 Inventory Quantity")
 
@@ -212,28 +211,21 @@ if uploaded_file:
         st.plotly_chart(fig, use_container_width=True)
 
         # =========================
-        # AGE (FIXED)
+        # AGE GRAPH
         # =========================
         st.subheader("⏳ Inventory Age")
 
         fig_age = go.Figure()
 
-        fig_age.add_trace(go.Scatter(
-            x=daily["Date"], y=daily["Avg Age"],
-            name="Age", yaxis="y1"
-        ))
+        fig_age.add_trace(go.Scatter(x=daily["Date"], y=daily["Avg Age"], name="Age", yaxis="y1"))
 
-        fig_age.add_trace(go.Bar(
-            x=daily["Date"], y=daily["Purchase Qty"],
-            name="Purchases", marker=dict(color="#006400"),
-            opacity=0.6, yaxis="y2"
-        ))
+        fig_age.add_trace(go.Bar(x=daily["Date"], y=daily["Purchase Qty"],
+                                 name="Purchases", marker=dict(color="#006400"),
+                                 opacity=0.6, yaxis="y2"))
 
-        fig_age.add_trace(go.Bar(
-            x=daily["Date"], y=daily["Sales Qty"],
-            name="Sales", marker=dict(color="#8B0000"),
-            opacity=0.6, yaxis="y2"
-        ))
+        fig_age.add_trace(go.Bar(x=daily["Date"], y=daily["Sales Qty"],
+                                 name="Sales", marker=dict(color="#8B0000"),
+                                 opacity=0.6, yaxis="y2"))
 
         fig_age.update_layout(
             template="plotly_dark",
@@ -243,6 +235,27 @@ if uploaded_file:
         )
 
         st.plotly_chart(fig_age, use_container_width=True)
+
+        # =========================
+        # AGING BUCKETS
+        # =========================
+        st.subheader("📊 Aging Buckets")
+
+        bucket_df = pd.DataFrame(bucket_data, columns=["Date", "0-30", "31-60", "61-90", "90+"])
+        bucket_df.set_index("Date", inplace=True)
+
+        st.bar_chart(bucket_df)
+
+        # =========================
+        # HISTOGRAM
+        # =========================
+        st.subheader("📊 Inventory Distribution")
+
+        fig_hist = go.Figure()
+        fig_hist.add_trace(go.Histogram(x=daily["Closing_Stock"], nbinsx=20))
+        fig_hist.add_vline(x=rop, line_dash="dot", line_color="purple")
+
+        st.plotly_chart(fig_hist, use_container_width=True)
 
         # =========================
         # SUPPLIER / CUSTOMER
