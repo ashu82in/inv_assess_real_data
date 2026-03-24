@@ -198,7 +198,7 @@ if uploaded_file:
         c5.metric("Locked %", round(daily.iloc[-1]["Locked %"], 1))
 
         # =========================
-        # INVENTORY CHART
+        # INVENTORY QUANTITY
         # =========================
         st.subheader("📦 Inventory Quantity")
 
@@ -211,21 +211,42 @@ if uploaded_file:
         st.plotly_chart(fig, use_container_width=True)
 
         # =========================
-        # AGE GRAPH
+        # INVENTORY VALUE
+        # =========================
+        st.subheader("💰 Inventory Value")
+
+        fig_val = go.Figure()
+        fig_val.add_trace(go.Scatter(
+            x=daily["Date"],
+            y=daily["Inventory Value"],
+            mode="lines+markers",
+            name="Inventory Value"
+        ))
+        st.plotly_chart(fig_val, use_container_width=True)
+
+        # =========================
+        # INVENTORY AGE
         # =========================
         st.subheader("⏳ Inventory Age")
 
         fig_age = go.Figure()
 
-        fig_age.add_trace(go.Scatter(x=daily["Date"], y=daily["Avg Age"], name="Age", yaxis="y1"))
+        fig_age.add_trace(go.Scatter(
+            x=daily["Date"], y=daily["Avg Age"],
+            name="Age", yaxis="y1"
+        ))
 
-        fig_age.add_trace(go.Bar(x=daily["Date"], y=daily["Purchase Qty"],
-                                 name="Purchases", marker=dict(color="#006400"),
-                                 opacity=0.6, yaxis="y2"))
+        fig_age.add_trace(go.Bar(
+            x=daily["Date"], y=daily["Purchase Qty"],
+            name="Purchases", marker=dict(color="#006400"),
+            opacity=0.6, yaxis="y2"
+        ))
 
-        fig_age.add_trace(go.Bar(x=daily["Date"], y=daily["Sales Qty"],
-                                 name="Sales", marker=dict(color="#8B0000"),
-                                 opacity=0.6, yaxis="y2"))
+        fig_age.add_trace(go.Bar(
+            x=daily["Date"], y=daily["Sales Qty"],
+            name="Sales", marker=dict(color="#8B0000"),
+            opacity=0.6, yaxis="y2"
+        ))
 
         fig_age.update_layout(
             template="plotly_dark",
