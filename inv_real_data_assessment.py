@@ -39,13 +39,14 @@ if uploaded_file:
             "received": "Received",
             "issued": "Issued",
             "value": "Value",
+            "rate": "Rate",
             "closing stock": "Closing Stock"
         }, inplace=True)
 
         # =========================
         # 🔹 VALIDATION
         # =========================
-        required_cols = ["Date", "Received", "Issued", "Closing Stock"]
+        required_cols = ["Date", "Received", "Issued", "Closing Stock", "Rate"]
 
         missing = [col for col in required_cols if col not in df.columns]
         if missing:
@@ -58,26 +59,38 @@ if uploaded_file:
         # =========================
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
-        numeric_cols = ["Received", "Issued", "Value", "Closing Stock"]
+        numeric_cols = ["Received", "Issued", "Value", "Closing Stock", "Rate"]
 
         for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
         df[numeric_cols] = df[numeric_cols].fillna(0)
 
         df = df.sort_values("Date")
 
         # =========================
+        # 🔹 VALUE CALCULATION
+        # =========================
+        df["Purchase Value"] = df["Received"] * df["Rate"]
+        df["Sales Value"] = df["Issued"] * df["Rate"]
+        df["Net Value Movement"] = df["Purchase Value"] - df["Sales Value"]
+
+        # =========================
         # 🔹 DAILY SUMMARY
         # =========================
         daily_summary = df.groupby("Date").agg({
             "Received": "sum",
-            "Issued": "sum"
+            "Issued": "sum",
+            "Purchase Value": "sum",
+            "Sales Value": "sum",
+            "Net Value Movement": "sum"
         }).reset_index()
 
-        daily_summary["Net Movement"] = daily_summary["Received"] - daily_summary["Issued"]
+        daily_summary["Net Movement"] = (
+            daily_summary["Received"] - daily_summary["Issued"]
+        )
 
+        # Closing stock (last transaction of day)
         closing_stock_daily = df.groupby("Date")["Closing Stock"].last().reset_index()
 
         daily_summary = daily_summary.merge(closing_stock_daily, on="Date", how="left")
@@ -87,6 +100,11 @@ if uploaded_file:
             "Issued": "Total Issued",
             "Closing Stock": "Closing_Stock"
         }, inplace=True)
+
+        # =========================
+        # 🔹 INVENTORY VALUE
+        # =========================
+        daily_summary["Inventory Value"] = daily_summary["Net Value Movement"].cumsum()
 
         # =========================
         # 🔹 CONSUMPTION
@@ -118,7 +136,9 @@ if uploaded_file:
             value=0
         )
 
-        stockout_days = (daily_summary["Closing_Stock"] <= stockout_threshold).sum()
+        stockout_days = (
+            daily_summary["Closing_Stock"] <= stockout_threshold
+        ).sum()
 
         # =========================
         # 🔹 INVENTORY AGE
@@ -130,15 +150,18 @@ if uploaded_file:
         # =========================
         st.subheader("📌 Key Metrics")
 
-        col1, col2, col3, col4 = st.columns(4)
+        current_value = daily_summary.iloc[-1]["Inventory Value"]
+
+        col1, col2, col3, col4, col5 = st.columns(5)
 
         col1.metric("Current Stock", int(current_stock))
         col2.metric("Avg Daily Consumption", round(avg_consumption, 2))
         col3.metric("Inventory Age (Days)", int(inventory_age))
         col4.metric("Stock-out Days", int(stockout_days))
+        col5.metric("Inventory Value", int(current_value))
 
         # =========================
-        # 🔹 HEALTH INSIGHT
+        # 🔹 INSIGHTS
         # =========================
         st.subheader("🧠 Insights")
 
@@ -148,8 +171,10 @@ if uploaded_file:
             st.success("✅ No stock-out risk observed")
 
         # =========================
-        # 🔹 CHART
+        # 🔹 STOCK CHART
         # =========================
+        st.subheader("📦 Inventory Quantity Trend")
+
         fig = go.Figure()
 
         fig.add_trace(go.Scatter(
@@ -159,7 +184,6 @@ if uploaded_file:
             name="Stock"
         ))
 
-        # Threshold line
         fig.add_trace(go.Scatter(
             x=daily_summary["Date"],
             y=[stockout_threshold] * len(daily_summary),
@@ -168,13 +192,43 @@ if uploaded_file:
             line=dict(dash="dash", color="red")
         ))
 
-        fig.update_layout(
-            xaxis_title="Date",
-            yaxis_title="Stock Level",
-            template="simple_white"
-        )
+        fig.update_layout(template="simple_white")
 
         st.plotly_chart(fig, use_container_width=True)
+
+        # =========================
+        # 🔹 VALUE CHART
+        # =========================
+        st.subheader("💰 Inventory Value Trend")
+
+        fig_value = go.Figure()
+
+        fig_value.add_trace(go.Scatter(
+            x=daily_summary["Date"],
+            y=daily_summary["Inventory Value"],
+            mode="lines+markers",
+            name="Inventory Value"
+        ))
+
+        fig_value.add_trace(go.Scatter(
+            x=daily_summary["Date"],
+            y=daily_summary["Purchase Value"],
+            mode="lines",
+            name="Purchase Value",
+            line=dict(dash="dot", color="green")
+        ))
+
+        fig_value.add_trace(go.Scatter(
+            x=daily_summary["Date"],
+            y=daily_summary["Sales Value"],
+            mode="lines",
+            name="Sales Value",
+            line=dict(dash="dot", color="red")
+        ))
+
+        fig_value.update_layout(template="simple_white")
+
+        st.plotly_chart(fig_value, use_container_width=True)
 
         # =========================
         # 🔹 OPTIONAL TABLE
