@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
+from scipy.stats import norm
 
 st.set_page_config(layout="wide")
 st.title("📊 Inventory Intelligence Dashboard")
@@ -33,11 +35,6 @@ if uploaded_file:
             "closing stock": "Closing Stock",
         }, inplace=True)
 
-        required = ["Date", "Received", "Issued", "Closing Stock", "Rate"]
-        if not all(c in df.columns for c in required):
-            st.error("Missing required columns")
-            st.stop()
-
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
         df = df.dropna(subset=["Date"])
 
@@ -52,9 +49,9 @@ if uploaded_file:
         st.sidebar.header("⚙️ Settings")
 
         opening_inventory = st.sidebar.number_input("Opening Inventory Value", value=0)
-        opening_age_days = st.sidebar.number_input("Average Age of Opening Inventory (days)", value=30)
-        stockout_threshold = st.sidebar.number_input("Stock-out Threshold", value=0)
-        reorder_point = st.sidebar.number_input("Reorder Point", value=0)
+        opening_age_days = st.sidebar.number_input("Opening Inventory Age (days)", value=30)
+        lead_time = st.sidebar.number_input("Lead Time (days)", value=3)
+        service_level = st.sidebar.slider("Service Level (%)", 80, 99, 95)
         dead_days = st.sidebar.number_input("Dead Stock Threshold (days)", value=90)
 
         # =========================
@@ -65,95 +62,10 @@ if uploaded_file:
         df["Inventory Value"] = opening_inventory + df["Net Value"].cumsum()
 
         # =========================
-        # 🔹 DATE RANGE
+        # 🔹 DAILY DATA
         # =========================
         full_dates = pd.date_range(df["Date"].min(), df["Date"].max())
-        df_grouped = df.groupby("Date").agg({"Received": "sum", "Issued": "sum"})
 
-        # =========================
-        # 🔹 FIFO ENGINE
-        # =========================
-        inventory_layers = []
-        age_list, bucket_data, dead_list = [], [], []
-
-        first_date = full_dates[0]
-
-        opening_qty = df.iloc[0]["Closing Stock"] - (df.iloc[0]["Received"] - df.iloc[0]["Issued"])
-
-        if opening_qty > 0:
-            inventory_layers.append({
-                "qty": opening_qty,
-                "date": first_date - pd.Timedelta(days=opening_age_days),
-                "rate": df.iloc[0]["Rate"]
-            })
-
-        for current_date in full_dates:
-
-            if current_date in df_grouped.index:
-                received = df_grouped.loc[current_date]["Received"]
-                issued = df_grouped.loc[current_date]["Issued"]
-            else:
-                received = 0
-                issued = 0
-
-            if received > 0:
-                day_rate = df[df["Date"] == current_date]["Rate"].mean()
-                inventory_layers.append({
-                    "qty": received,
-                    "date": current_date,
-                    "rate": day_rate
-                })
-
-            qty_to_issue = issued
-            while qty_to_issue > 0 and inventory_layers:
-                layer = inventory_layers[0]
-                if layer["qty"] <= qty_to_issue:
-                    qty_to_issue -= layer["qty"]
-                    inventory_layers.pop(0)
-                else:
-                    layer["qty"] -= qty_to_issue
-                    qty_to_issue = 0
-
-            total_qty = sum(l["qty"] for l in inventory_layers)
-
-            if total_qty == 0:
-                avg_age = 0
-            else:
-                weighted_age = sum(
-                    l["qty"] * (current_date - l["date"]).days for l in inventory_layers
-                )
-                avg_age = weighted_age / total_qty
-
-            age_list.append(avg_age)
-
-            b1 = b2 = b3 = b4 = dead_val = 0
-
-            for l in inventory_layers:
-                age = (current_date - l["date"]).days
-                value = l["qty"] * l["rate"]
-
-                if age <= 30:
-                    b1 += value
-                elif age <= 60:
-                    b2 += value
-                elif age <= 90:
-                    b3 += value
-                else:
-                    b4 += value
-
-                if age >= dead_days:
-                    dead_val += value
-
-            bucket_data.append([current_date, b1, b2, b3, b4])
-            dead_list.append(dead_val)
-
-        age_df = pd.DataFrame({"Date": full_dates, "Avg Age": age_list})
-        bucket_df = pd.DataFrame(bucket_data, columns=["Date", "0-30", "31-60", "61-90", "90+"])
-        dead_df = pd.DataFrame({"Date": full_dates, "Dead Value": dead_list})
-
-        # =========================
-        # 🔹 DAILY
-        # =========================
         daily = df.groupby("Date").agg({
             "Received": "sum",
             "Issued": "sum",
@@ -168,26 +80,74 @@ if uploaded_file:
         }, inplace=True)
 
         daily = pd.DataFrame({"Date": full_dates}).merge(daily, on="Date", how="left")
-        daily = daily.merge(age_df, on="Date", how="left")
-        daily = daily.merge(bucket_df, on="Date", how="left")
-        daily = daily.merge(dead_df, on="Date", how="left")
 
         daily["Closing_Stock"] = daily["Closing_Stock"].ffill().fillna(0)
         daily["Inventory Value"] = daily["Inventory Value"].ffill().fillna(opening_inventory)
+        daily["Total Received"] = daily["Total Received"].fillna(0)
+        daily["Total Issued"] = daily["Total Issued"].fillna(0)
 
         # =========================
-        # 🔹 FLAGS
+        # 🔹 DEMAND STATS
         # =========================
-        daily["Stockout Flag"] = daily["Closing_Stock"] <= stockout_threshold
-        daily["Reorder Flag"] = daily["Closing_Stock"] <= reorder_point
+        mean_demand = daily["Total Issued"].mean()
+        std_demand = daily["Total Issued"].std()
 
-        stockout_days = daily["Stockout Flag"].sum()
-        reorder_days = daily["Reorder Flag"].sum()
+        z_value = norm.ppf(service_level / 100)
+
+        rop = (mean_demand * lead_time) + (z_value * std_demand * np.sqrt(lead_time))
+
+        daily["ROP"] = rop
 
         # =========================
-        # 🔹 WORKING CAPITAL
+        # 🔹 ZONES
         # =========================
-        daily["Locked %"] = (daily["90+"] / daily["Inventory Value"]) * 100
+        daily["Zone"] = "Healthy"
+        daily.loc[daily["Closing_Stock"] <= 0, "Zone"] = "Stock-out"
+        daily.loc[(daily["Closing_Stock"] > 0) & (daily["Closing_Stock"] <= rop), "Zone"] = "Reorder"
+        daily.loc[daily["Closing_Stock"] > 1.5 * rop, "Zone"] = "Overstock"
+
+        # =========================
+        # 🔹 FIFO AGE
+        # =========================
+        inventory_layers = []
+        age_list = []
+
+        first_date = full_dates[0]
+
+        opening_qty = df.iloc[0]["Closing Stock"] - (df.iloc[0]["Received"] - df.iloc[0]["Issued"])
+
+        if opening_qty > 0:
+            inventory_layers.append({
+                "qty": opening_qty,
+                "date": first_date - pd.Timedelta(days=opening_age_days)
+            })
+
+        grouped = df.groupby("Date").agg({"Received": "sum", "Issued": "sum"})
+
+        for d in full_dates:
+            r = grouped.loc[d]["Received"] if d in grouped.index else 0
+            i = grouped.loc[d]["Issued"] if d in grouped.index else 0
+
+            if r > 0:
+                inventory_layers.append({"qty": r, "date": d})
+
+            while i > 0 and inventory_layers:
+                if inventory_layers[0]["qty"] <= i:
+                    i -= inventory_layers[0]["qty"]
+                    inventory_layers.pop(0)
+                else:
+                    inventory_layers[0]["qty"] -= i
+                    i = 0
+
+            total_qty = sum(l["qty"] for l in inventory_layers)
+
+            if total_qty == 0:
+                age_list.append(0)
+            else:
+                weighted = sum(l["qty"] * (d - l["date"]).days for l in inventory_layers)
+                age_list.append(weighted / total_qty)
+
+        daily["Avg Age"] = age_list
 
         # =========================
         # 🔹 PURCHASE / SALES
@@ -200,14 +160,12 @@ if uploaded_file:
         # =========================
         st.subheader("📌 Key Metrics")
 
-        col1, col2, col3, col4, col5, col6 = st.columns(6)
+        col1, col2, col3, col4 = st.columns(4)
 
         col1.metric("Inventory Value", int(daily.iloc[-1]["Inventory Value"]))
-        col2.metric("Dead Stock ₹", int(daily.iloc[-1]["Dead Value"]))
-        col3.metric("Locked Capital %", round(daily.iloc[-1]["Locked %"], 1))
-        col4.metric("Avg Age", int(daily.iloc[-1]["Avg Age"]))
-        col5.metric("Stock-out Days", int(stockout_days))
-        col6.metric("Reorder Days", int(reorder_days))
+        col2.metric("Reorder Point", int(rop))
+        col3.metric("Avg Demand", round(mean_demand, 1))
+        col4.metric("Demand Variability", round(std_demand, 1))
 
         # =========================
         # 🔹 INVENTORY QUANTITY
@@ -216,9 +174,8 @@ if uploaded_file:
 
         fig_qty = go.Figure()
         fig_qty.add_trace(go.Scatter(x=daily["Date"], y=daily["Closing_Stock"], name="Stock"))
-        fig_qty.add_trace(go.Scatter(x=daily["Date"], y=[stockout_threshold]*len(daily), name="Stock-out", line=dict(dash="dash")))
-        fig_qty.add_trace(go.Scatter(x=daily["Date"], y=[reorder_point]*len(daily), name="Reorder", line=dict(dash="dot")))
-
+        fig_qty.add_trace(go.Scatter(x=daily["Date"], y=[rop]*len(daily),
+                                    name="ROP", line=dict(color="purple", dash="dot")))
         st.plotly_chart(fig_qty, use_container_width=True)
 
         # =========================
@@ -228,58 +185,53 @@ if uploaded_file:
         st.line_chart(daily.set_index("Date")["Inventory Value"])
 
         # =========================
-        # 🔹 WORKING CAPITAL
-        # =========================
-        st.subheader("💸 Working Capital Lock")
-        st.line_chart(daily.set_index("Date")["Locked %"])
-
-        # =========================
-        # 🔹 INVENTORY AGE (FINAL)
+        # 🔹 INVENTORY AGE
         # =========================
         st.subheader("⏳ Inventory Age (with Purchases & Sales)")
 
         fig_age = go.Figure()
 
         fig_age.add_trace(go.Scatter(
-            x=daily["Date"],
-            y=daily["Avg Age"],
-            mode="lines+markers",
-            name="Avg Age",
-            yaxis="y1"
+            x=daily["Date"], y=daily["Avg Age"],
+            name="Avg Age", yaxis="y1"
         ))
 
         fig_age.add_trace(go.Bar(
-            x=daily["Date"],
-            y=daily["Purchase Qty"],
-            name="Purchases",
-            marker=dict(color="#2ca02c"),
-            opacity=0.8,
-            yaxis="y2"
+            x=daily["Date"], y=daily["Purchase Qty"],
+            name="Purchases", marker=dict(color="#006400"),
+            opacity=0.6, yaxis="y2"
         ))
 
         fig_age.add_trace(go.Bar(
-            x=daily["Date"],
-            y=daily["Sales Qty"],
-            name="Sales",
-            marker=dict(color="#d62728"),
-            opacity=0.8,
-            yaxis="y2"
+            x=daily["Date"], y=daily["Sales Qty"],
+            name="Sales", marker=dict(color="#8B0000"),
+            opacity=0.6, yaxis="y2"
         ))
 
         fig_age.update_layout(
             template="simple_white",
-            barmode="relative",
-            yaxis=dict(title="Avg Age"),
+            yaxis=dict(title="Age"),
             yaxis2=dict(overlaying="y", side="right", title="Movement")
         )
 
         st.plotly_chart(fig_age, use_container_width=True)
 
         # =========================
-        # 🔹 AGING BUCKETS
+        # 🔹 ZONE DISTRIBUTION
         # =========================
-        st.subheader("📊 Aging Buckets")
-        st.bar_chart(daily.set_index("Date")[["0-30", "31-60", "61-90", "90+"]])
+        st.subheader("📊 Inventory Zone Distribution")
+        st.bar_chart(daily["Zone"].value_counts())
+
+        # =========================
+        # 🔹 HISTOGRAM
+        # =========================
+        st.subheader("📊 Inventory Distribution")
+
+        fig_hist = go.Figure()
+        fig_hist.add_trace(go.Histogram(x=daily["Closing_Stock"], nbinsx=20))
+        fig_hist.add_vline(x=rop, line_dash="dot", line_color="purple")
+
+        st.plotly_chart(fig_hist, use_container_width=True)
 
     except Exception as e:
         st.error(str(e))
