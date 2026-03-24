@@ -31,8 +31,6 @@ if uploaded_file:
             "issued": "Issued",
             "rate": "Rate",
             "closing stock": "Closing Stock",
-            "particulars": "Party",
-            "sku": "SKU"
         }, inplace=True)
 
         required = ["Date", "Received", "Issued", "Closing Stock", "Rate"]
@@ -60,14 +58,11 @@ if uploaded_file:
         dead_days = st.sidebar.number_input("Dead Stock Threshold (days)", value=90)
 
         # =========================
-        # 🔹 VALUE CALCULATION
+        # 🔹 VALUE
         # =========================
         df["Net Qty"] = df["Received"] - df["Issued"]
         df["Net Value"] = df["Net Qty"] * df["Rate"]
         df["Inventory Value"] = opening_inventory + df["Net Value"].cumsum()
-
-        df["Purchase Value"] = df["Received"] * df["Rate"]
-        df["Sales Value"] = df["Issued"] * df["Rate"]
 
         # =========================
         # 🔹 DATE RANGE
@@ -76,14 +71,13 @@ if uploaded_file:
         df_grouped = df.groupby("Date").agg({"Received": "sum", "Issued": "sum"})
 
         # =========================
-        # 🔹 FIFO + AGE ENGINE (FIXED)
+        # 🔹 FIFO ENGINE
         # =========================
         inventory_layers = []
         age_list, bucket_data, dead_list = [], [], []
 
         first_date = full_dates[0]
 
-        # 🔥 Opening layer (NEW FIX)
         opening_qty = df.iloc[0]["Closing Stock"] - (df.iloc[0]["Received"] - df.iloc[0]["Issued"])
 
         if opening_qty > 0:
@@ -102,7 +96,6 @@ if uploaded_file:
                 received = 0
                 issued = 0
 
-            # Add new stock
             if received > 0:
                 day_rate = df[df["Date"] == current_date]["Rate"].mean()
                 inventory_layers.append({
@@ -111,7 +104,6 @@ if uploaded_file:
                     "rate": day_rate
                 })
 
-            # FIFO issue
             qty_to_issue = issued
             while qty_to_issue > 0 and inventory_layers:
                 layer = inventory_layers[0]
@@ -124,7 +116,6 @@ if uploaded_file:
 
             total_qty = sum(l["qty"] for l in inventory_layers)
 
-            # TRUE AGE
             if total_qty == 0:
                 avg_age = 0
             else:
@@ -135,7 +126,6 @@ if uploaded_file:
 
             age_list.append(avg_age)
 
-            # VALUE BUCKETS
             b1 = b2 = b3 = b4 = dead_val = 0
 
             for l in inventory_layers:
@@ -186,7 +176,7 @@ if uploaded_file:
         daily["Inventory Value"] = daily["Inventory Value"].ffill().fillna(opening_inventory)
 
         # =========================
-        # 🔹 STOCK-OUT & REORDER
+        # 🔹 STOCK + REORDER
         # =========================
         daily["Stockout Flag"] = daily["Closing_Stock"] <= stockout_threshold
         daily["Reorder Flag"] = daily["Closing_Stock"] <= reorder_point
@@ -198,6 +188,11 @@ if uploaded_file:
         # 🔹 WORKING CAPITAL
         # =========================
         daily["Locked %"] = (daily["90+"] / daily["Inventory Value"]) * 100
+
+        # =========================
+        # 🔹 MOVEMENT
+        # =========================
+        daily["Net Movement"] = daily["Total Received"] - daily["Total Issued"]
 
         # =========================
         # 🔹 METRICS
@@ -214,17 +209,48 @@ if uploaded_file:
         col6.metric("Reorder Days", int(reorder_days))
 
         # =========================
-        # 🔹 CHARTS
+        # 🔹 INVENTORY CHART (ENHANCED)
         # =========================
-        st.subheader("📦 Inventory Quantity")
+        st.subheader("📦 Inventory Quantity (with Movement)")
 
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=daily["Date"], y=daily["Closing_Stock"], name="Stock"))
-        fig.add_trace(go.Scatter(x=daily["Date"], y=[stockout_threshold]*len(daily), name="Stock-out", line=dict(dash="dash")))
-        fig.add_trace(go.Scatter(x=daily["Date"], y=[reorder_point]*len(daily), name="Reorder", line=dict(dash="dot")))
+
+        fig.add_trace(go.Scatter(
+            x=daily["Date"],
+            y=daily["Closing_Stock"],
+            mode="lines+markers",
+            name="Stock",
+            line=dict(width=3)
+        ))
+
+        fig.add_trace(go.Bar(
+            x=daily["Date"],
+            y=daily["Net Movement"],
+            name="Net Movement",
+            opacity=0.3
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=daily["Date"],
+            y=[stockout_threshold]*len(daily),
+            name="Stock-out",
+            line=dict(dash="dash", color="red")
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=daily["Date"],
+            y=[reorder_point]*len(daily),
+            name="Reorder",
+            line=dict(dash="dot", color="orange")
+        ))
+
+        fig.update_layout(barmode="relative", template="simple_white")
 
         st.plotly_chart(fig, use_container_width=True)
 
+        # =========================
+        # 🔹 OTHER CHARTS
+        # =========================
         st.subheader("💰 Inventory Value")
         st.line_chart(daily.set_index("Date")["Inventory Value"])
 
@@ -238,7 +264,7 @@ if uploaded_file:
         st.line_chart(daily.set_index("Date")["Locked %"])
 
         # =========================
-        # 🔹 ALERT TABLE
+        # 🔹 REORDER ALERTS
         # =========================
         st.subheader("📦 Reorder Alerts")
 
