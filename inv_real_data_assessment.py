@@ -375,7 +375,7 @@ if uploaded_file:
             
             st.sidebar.download_button(
                 label="📥 Download PDF Now",
-                data=pdf_bytes,
+                data=bytes(pdf_bytes),
                 file_name="Inventory_Analysis.pdf",
                 mime="application/pdf"
             )
