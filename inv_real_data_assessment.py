@@ -310,63 +310,101 @@ if uploaded_file:
             st.subheader("🧾 Customer Pareto")
             st.bar_chart(customer_df.groupby("Party")["Value"].sum().sort_values(ascending=False))
 
-    # =========================
-        # 📄 PDF REPORT GENERATION
+# =========================
+        # 📄 FULL DASHBOARD PDF REPORT
         # =========================
         st.sidebar.markdown("---")
-        st.sidebar.subheader("📋 Professional PDF Report")
+        st.sidebar.subheader("📋 Full Professional Report")
 
         from fpdf import FPDF
         import matplotlib.pyplot as plt
         import tempfile
 
-        def create_pdf(df_daily, total_val, dead_val, avg_age, rop_val):
+        def create_full_pdf(df_daily, df_raw, bucket_df, total_val, dead_val, avg_age, rop_val):
             pdf = FPDF()
+            pdf.set_auto_page_break(auto=True, margin=15)
+            
+            # --- PAGE 1: EXECUTIVE SUMMARY ---
             pdf.add_page()
-            
-            # --- Title ---
-            pdf.set_font("Arial", 'B', 20)
-            pdf.cell(0, 15, "Inventory Intelligence Report", ln=True, align='C')
+            pdf.set_font("Arial", 'B', 24)
+            pdf.cell(0, 20, "Inventory Intelligence Dashboard", ln=True, align='C')
             pdf.set_font("Arial", '', 10)
-            pdf.cell(0, 5, f"Generated on: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}", ln=True, align='C')
+            pdf.cell(0, 5, f"Report Period: {df_daily['Date'].min().date()} to {df_daily['Date'].max().date()}", ln=True, align='C')
             pdf.ln(10)
 
-            # --- KPI Section ---
-            pdf.set_fill_color(240, 240, 240)
-            pdf.set_font("Arial", 'B', 12)
-            pdf.cell(0, 10, " 1. Key Business Metrics", ln=True, fill=True)
-            pdf.set_font("Arial", '', 11)
+            # KPIs
+            pdf.set_fill_color(230, 235, 245)
+            pdf.set_font("Arial", 'B', 14)
+            pdf.cell(0, 10, " 1. Strategic Metrics", ln=True, fill=True)
             pdf.ln(2)
-            pdf.cell(90, 8, f"Total Inventory Value: {int(total_val):,}")
-            pdf.cell(90, 8, f"Dead Stock Value: {int(dead_val):,}", ln=True)
-            pdf.cell(90, 8, f"Average Stock Age: {int(avg_age)} Days")
-            pdf.cell(90, 8, f"System Reorder Point: {int(rop_val)} Units", ln=True)
+            pdf.set_font("Arial", '', 12)
+            pdf.cell(95, 10, f"Total Inventory Value:  {int(total_val):,}", border=1)
+            pdf.cell(95, 10, f"Dead Stock Value:  {int(dead_val):,}", ln=True, border=1)
+            pdf.cell(95, 10, f"Average Stock Age:  {int(avg_age)} Days", border=1)
+            pdf.cell(95, 10, f"Reorder Point (ROP):  {int(rop_val)} Units", ln=True, border=1)
             pdf.ln(10)
 
-            # --- Chart Section ---
-            pdf.set_font("Arial", 'B', 12)
-            pdf.cell(0, 10, " 2. Inventory Trend Analysis", ln=True, fill=True)
-            
-            # Create a Matplotlib figure for the PDF
-            plt.figure(figsize=(10, 5))
-            plt.plot(df_daily["Date"], df_daily["Closing_Stock"], color='#1f77b4', label="Stock Level")
+            # GRAPH 1: Inventory Quantity Trend
+            pdf.set_font("Arial", 'B', 14)
+            pdf.cell(0, 10, " 2. Stock Level & ROP Trend", ln=True)
+            plt.figure(figsize=(10, 4))
+            plt.plot(df_daily["Date"], df_daily["Closing_Stock"], label="Stock Level")
             plt.axhline(y=rop_val, color='r', linestyle='--', label="ROP")
-            plt.title("Inventory Level Trend")
             plt.grid(True, alpha=0.3)
             plt.legend()
-            
-            # Save plot to a temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-                plt.savefig(tmpfile.name, dpi=150)
-                pdf.image(tmpfile.name, x=10, y=pdf.get_y() + 5, w=190)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                plt.savefig(tmp.name, dpi=150, bbox_inches='tight')
+                pdf.image(tmp.name, x=10, y=pdf.get_y(), w=190)
             plt.close()
+            
+            # --- PAGE 2: AGING & DISTRIBUTION ---
+            pdf.add_page()
+            
+            # GRAPH 2: Aging Buckets (Stacked Bar)
+            pdf.set_font("Arial", 'B', 14)
+            pdf.cell(0, 10, " 3. Inventory Aging Analysis", ln=True, fill=True)
+            pdf.ln(5)
+            bucket_df.plot(kind='bar', stacked=True, figsize=(10, 5))
+            plt.title("Aging Buckets Over Time")
+            plt.xticks(rotation=45)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                plt.savefig(tmp.name, dpi=150, bbox_inches='tight')
+                pdf.image(tmp.name, x=10, y=pdf.get_y(), w=190)
+            plt.close()
+            pdf.ln(70) # Move cursor down after image
+
+            # GRAPH 3: Inventory Distribution (Histogram)
+            pdf.set_font("Arial", 'B', 14)
+            pdf.cell(0, 10, " 4. Stock Distribution", ln=True)
+            plt.figure(figsize=(10, 4))
+            plt.hist(df_daily["Closing_Stock"], bins=20, color='skyblue', edgecolor='black')
+            plt.axvline(rop_val, color='red', linestyle='dashed', linewidth=2, label='ROP')
+            plt.title("Frequency of Stock Levels")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                plt.savefig(tmp.name, dpi=150, bbox_inches='tight')
+                pdf.image(tmp.name, x=10, y=pdf.get_y(), w=190)
+            plt.close()
+
+            # --- PAGE 3: MOVEMENT (Optional) ---
+            if "Party" in df_raw.columns:
+                pdf.add_page()
+                pdf.set_font("Arial", 'B', 14)
+                pdf.cell(0, 10, " 5. Movement Analysis (Purchases & Sales)", ln=True, fill=True)
+                plt.figure(figsize=(10, 5))
+                plt.bar(df_daily["Date"], df_daily["Purchase Qty"], color='green', alpha=0.5, label="Purchases")
+                plt.bar(df_daily["Date"], df_daily["Sales Qty"], color='red', alpha=0.5, label="Sales")
+                plt.legend()
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                    plt.savefig(tmp.name, dpi=150, bbox_inches='tight')
+                    pdf.image(tmp.name, x=10, y=pdf.get_y(), w=190)
+                plt.close()
 
             return pdf.output(dest='S')
 
-        # Run PDF Function
-        if st.sidebar.button("🛠️ Build PDF Report"):
-            pdf_bytes = create_pdf(
-                daily, 
+        # Logic to trigger the build
+        if st.sidebar.button("🛠️ Build Full Dashboard PDF"):
+            full_pdf_bytes = create_full_pdf(
+                daily, df, bucket_df,
                 daily.iloc[-1]["Inventory Value"],
                 daily.iloc[-1]["Dead Value"],
                 daily["Avg Age"].mean(),
@@ -374,11 +412,10 @@ if uploaded_file:
             )
             
             st.sidebar.download_button(
-                label="📥 Download PDF Now",
-                data=bytes(pdf_bytes),
-                file_name="Inventory_Analysis.pdf",
+                label="📥 Download Full PDF",
+                data=bytes(full_pdf_bytes),
+                file_name="Full_Inventory_Dashboard.pdf",
                 mime="application/pdf"
             )
-            
     except Exception as e:
         st.error(str(e))
