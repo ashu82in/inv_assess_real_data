@@ -310,5 +310,54 @@ if uploaded_file:
             st.subheader("🧾 Customer Pareto")
             st.bar_chart(customer_df.groupby("Party")["Value"].sum().sort_values(ascending=False))
 
+    # =========================
+        # 📄 REPORT GENERATION
+        # =========================
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("📥 Export Reports")
+
+        import io
+
+        def to_excel(df_daily, df_buckets, df_raw):
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                # Sheet 1: Daily Summary & KPIs
+                df_daily.to_excel(writer, index=False, sheet_name='Daily_Metrics')
+                
+                # Sheet 2: Aging Analysis
+                df_buckets.to_excel(writer, index=True, sheet_name='Aging_Buckets')
+                
+                # Sheet 3: Full Transaction History
+                df_raw.to_excel(writer, index=False, sheet_name='Transaction_Log')
+                
+                # Auto-adjust columns width (Optional but professional)
+                for sheet in writer.sheets:
+                    writer.sheets[sheet].set_column('A:Z', 18)
+                    
+            return output.getvalue()
+
+        # Generate the Excel binary
+        excel_data = to_excel(daily, bucket_df, df)
+
+        st.sidebar.download_button(
+            label="🚀 Download Excel Report",
+            data=excel_data,
+            file_name=f"Inventory_Report_{pd.Timestamp.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        # PDF Option (Simple Summary)
+        if st.sidebar.button("Generate Summary Text"):
+            summary_text = f"""
+            INVENTORY INTELLIGENCE SUMMARY
+            Date: {pd.Timestamp.now().strftime('%Y-%m-%d')}
+            ---
+            Total Inventory Value: {int(daily.iloc[-1]['Inventory Value'])}
+            Safety Stock Level: {int(safety_stock)}
+            Dead Stock Value: {int(daily.iloc[-1]['Dead Value'])}
+            Avg Inventory Age: {int(daily['Avg Age'].mean())} days
+            """
+            st.sidebar.text_area("Copy Summary", summary_text, height=150)
+
     except Exception as e:
         st.error(str(e))
