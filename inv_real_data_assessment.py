@@ -310,12 +310,11 @@ if uploaded_file:
             st.subheader("🧾 Customer Pareto")
             st.bar_chart(customer_df.groupby("Party")["Value"].sum().sort_values(ascending=False))
 
-# =========================
-        # 📄 FULL DASHBOARD PDF REPORT
-        # =========================
+# =========================================================
+        # 📄 FULL PROFESSIONAL PDF & EXCEL EXPORT
+        # =========================================================
         st.sidebar.markdown("---")
-        st.sidebar.subheader("📋 Full Professional Report")
-
+        st.sidebar.subheader("📥 Final Report Exports")
 
         from fpdf import FPDF
         import matplotlib.pyplot as plt
@@ -334,7 +333,7 @@ if uploaded_file:
             pdf.cell(0, 5, f"Period: {df_daily['Date'].min().date()} to {df_daily['Date'].max().date()}", ln=True, align='C')
             pdf.ln(10)
 
-            # Strategic Metrics Boxes
+            # Metrics
             pdf.set_fill_color(240, 245, 255)
             pdf.set_font("Arial", 'B', 14)
             pdf.cell(0, 10, " 1. Executive Summary Metrics", ln=True, fill=True)
@@ -346,13 +345,12 @@ if uploaded_file:
             pdf.cell(95, 12, f" Reorder Point (ROP): {int(rop_val)} Units", ln=True, border=1)
             pdf.ln(10)
 
-            # GRAPH 1: Trend Line
+            # Trend Graph
             pdf.set_font("Arial", 'B', 14)
             pdf.cell(0, 10, " 2. Inventory Level & ROP Trend", ln=True)
             plt.figure(figsize=(10, 4))
             plt.plot(df_daily["Date"], df_daily["Closing_Stock"], color='#1f77b4', label="Stock Level")
             plt.axhline(y=rop_val, color='r', linestyle='--', label="ROP")
-            plt.title("Daily Closing Stock vs. Reorder Point")
             plt.grid(True, alpha=0.3)
             plt.legend()
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
@@ -362,84 +360,97 @@ if uploaded_file:
             
             # --- PAGE 2: AGING & DISTRIBUTION ---
             pdf.add_page()
-            
-            # GRAPH 2: Aging Buckets (The Fix for 'freq' error is here)
             pdf.set_font("Arial", 'B', 14)
-            pdf.cell(0, 10, " 3. Inventory Aging Analysis (Weekly)", ln=True, fill=True)
+            pdf.cell(0, 10, " 3. Inventory Aging (Value Distribution)", ln=True, fill=True)
             pdf.ln(5)
             
-            # Resample bucket data to Weekly to avoid 'freq' error and clear up the graph
             temp_bucket = bucket_df.copy()
             temp_bucket.index = pd.to_datetime(temp_bucket.index)
             temp_bucket = temp_bucket.resample('W').mean() 
 
             fig, ax = plt.subplots(figsize=(10, 5))
             temp_bucket.plot(kind='bar', stacked=True, ax=ax)
-            plt.title("Inventory Value by Aging Bucket")
-            plt.ylabel("Value")
             plt.xticks(rotation=45)
-            
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                 plt.savefig(tmp.name, dpi=150, bbox_inches='tight')
                 pdf.image(tmp.name, x=10, y=pdf.get_y(), w=190)
             plt.close()
-            pdf.ln(80) 
 
-            # GRAPH 3: Histogram
+            pdf.set_y(pdf.get_y() + 90) # Gap to prevent overlap
+
             pdf.set_font("Arial", 'B', 14)
-            pdf.cell(0, 10, " 4. Stock Level Distribution", ln=True)
+            pdf.cell(0, 10, " 4. Stock Level Distribution", ln=True, fill=True)
             plt.figure(figsize=(10, 4))
             plt.hist(df_daily["Closing_Stock"], bins=20, color='skyblue', edgecolor='black', alpha=0.7)
-            plt.axvline(rop_val, color='red', linestyle='dashed', linewidth=2, label='ROP')
-            plt.title("Frequency of Stock Quantities")
-            plt.xlabel("Quantity")
-            plt.ylabel("Days Count")
+            plt.axvline(rop_val, color='red', linestyle='dashed', label='ROP')
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                 plt.savefig(tmp.name, dpi=150, bbox_inches='tight')
-                pdf.image(tmp.name, x=10, y=pdf.get_y(), w=190)
+                pdf.image(tmp.name, x=10, y=pdf.get_y() + 5, w=190)
             plt.close()
 
-            # --- PAGE 3: MOVEMENT (Only if Party data exists) ---
+            # --- PAGE 3: SUPPLIER & CUSTOMER ANALYSIS ---
             if "Party" in df_raw.columns:
                 pdf.add_page()
-                pdf.set_font("Arial", 'B', 14)
-                pdf.cell(0, 10, " 5. Stock Movement (Purchases & Sales)", ln=True, fill=True)
-                plt.figure(figsize=(10, 5))
-                plt.bar(df_daily["Date"], df_daily["Purchase Qty"], color='green', alpha=0.5, label="Purchases")
-                plt.bar(df_daily["Date"], df_daily["Sales Qty"], color='red', alpha=0.5, label="Sales")
-                plt.title("Incoming vs Outgoing Material")
-                plt.legend()
+                pdf.set_font("Arial", 'B', 16)
+                pdf.cell(0, 15, "Supplier & Customer Analysis", ln=True, align='C')
+                pdf.ln(5)
+
+                # Supplier Pareto
+                pdf.set_font("Arial", 'B', 12)
+                pdf.cell(0, 10, " 5. Top Suppliers by Purchase Value", ln=True, fill=True)
+                sup_data = df_raw[df_raw["Received"] > 0].copy()
+                sup_data["Value"] = sup_data["Received"] * sup_data["Rate"]
+                sup_pareto = sup_data.groupby("Party")["Value"].sum().sort_values(ascending=False).head(10)
+                
+                plt.figure(figsize=(10, 4))
+                sup_pareto.plot(kind='bar', color='green', alpha=0.7)
+                plt.title("Top 10 Suppliers")
+                plt.ylabel("Total Value")
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                     plt.savefig(tmp.name, dpi=150, bbox_inches='tight')
-                    pdf.image(tmp.name, x=10, y=pdf.get_y(), w=190)
+                    pdf.image(tmp.name, x=10, y=pdf.get_y() + 5, w=190)
+                plt.close()
+
+                pdf.set_y(pdf.get_y() + 85) # Gap
+
+                # Customer Pareto
+                pdf.set_font("Arial", 'B', 12)
+                pdf.cell(0, 10, " 6. Top Customers by Sales Value", ln=True, fill=True)
+                cust_data = df_raw[df_raw["Issued"] > 0].copy()
+                cust_data["Value"] = cust_data["Issued"] * cust_data["Rate"]
+                cust_pareto = cust_data.groupby("Party")["Value"].sum().sort_values(ascending=False).head(10)
+                
+                plt.figure(figsize=(10, 4))
+                cust_pareto.plot(kind='bar', color='red', alpha=0.7)
+                plt.title("Top 10 Customers")
+                plt.ylabel("Total Value")
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                    plt.savefig(tmp.name, dpi=150, bbox_inches='tight')
+                    pdf.image(tmp.name, x=10, y=pdf.get_y() + 5, w=190)
                 plt.close()
 
             return pdf.output(dest='S')
 
-        # Sidebar Buttons
-        if st.sidebar.button("🛠️ Build Full Dashboard PDF"):
-            try:
-                full_pdf_bytes = create_full_pdf(
-                    daily, df, bucket_df,
-                    daily.iloc[-1]["Inventory Value"],
-                    daily.iloc[-1]["Dead Value"],
-                    daily["Avg Age"].mean(),
-                    rop
-                )
-                
-                st.sidebar.download_button(
-                    label="📥 Download Full PDF",
-                    data=bytes(full_pdf_bytes),
-                    file_name=f"Full_Inventory_Report_{pd.Timestamp.now().strftime('%Y%m%d')}.pdf",
-                    mime="application/pdf"
-                )
-                st.sidebar.success("PDF Ready for Download!")
-            except Exception as e:
-                st.sidebar.error(f"PDF Error: {str(e)}")
+        # --- Sidebar UI Controls ---
+        col_pdf, col_excel = st.sidebar.columns(2)
 
-        # Keep the Excel option as well for data analysis
-        if st.sidebar.button("🛠️ Prepare Excel Export"):
-            # (Reuse your previous to_excel function logic here if desired)
-            pass
+        with col_pdf:
+            if st.button("🛠️ Build PDF"):
+                try:
+                    pdf_output = create_full_pdf(daily, df, bucket_df, daily.iloc[-1]["Inventory Value"], daily.iloc[-1]["Dead Value"], daily["Avg Age"].mean(), rop)
+                    st.download_button(label="📥 Download PDF", data=bytes(pdf_output), file_name="Inventory_Full_Report.pdf", mime="application/pdf")
+                except Exception as e:
+                    st.error(f"PDF Error: {e}")
+
+        with col_excel:
+            if st.button("🛠️ Build Excel"):
+                # Excel logic (using your existing to_excel function)
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    daily.to_excel(writer, index=False, sheet_name='Summary')
+                    df.to_excel(writer, index=False, sheet_name='RawData')
+                st.download_button(label="📥 Download Excel", data=output.getvalue(), file_name="Inventory_Data.xlsx")
+
+    
     except Exception as e:
         st.error(str(e))
