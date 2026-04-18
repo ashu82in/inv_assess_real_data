@@ -311,53 +311,74 @@ if uploaded_file:
             st.bar_chart(customer_df.groupby("Party")["Value"].sum().sort_values(ascending=False))
 
     # =========================
-        # 📄 REPORT GENERATION
+        # 📄 PDF REPORT GENERATION
         # =========================
         st.sidebar.markdown("---")
-        st.sidebar.subheader("📥 Export Reports")
-    
-        import io
-    
-        def to_excel(df_daily, df_buckets, df_raw):
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                # Sheet 1: Daily Summary & KPIs
-                df_daily.to_excel(writer, index=False, sheet_name='Daily_Metrics')
-                
-                # Sheet 2: Aging Analysis
-                df_buckets.to_excel(writer, index=True, sheet_name='Aging_Buckets')
-                
-                # Sheet 3: Full Transaction History
-                df_raw.to_excel(writer, index=False, sheet_name='Transaction_Log')
-                
-                # Auto-adjust columns width (Optional but professional)
-                for sheet in writer.sheets:
-                    writer.sheets[sheet].set_column('A:Z', 18)
-                    
-            return output.getvalue()
-    
-        # Generate the Excel binary
-        excel_data = to_excel(daily, bucket_df, df)
-    
-        st.sidebar.download_button(
-            label="🚀 Download Excel Report",
-            data=excel_data,
-            file_name=f"Inventory_Report_{pd.Timestamp.now().strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    
-        # PDF Option (Simple Summary)
-        if st.sidebar.button("Generate Summary Text"):
-            summary_text = f"""
-            INVENTORY INTELLIGENCE SUMMARY
-            Date: {pd.Timestamp.now().strftime('%Y-%m-%d')}
-            ---
-            Total Inventory Value: {int(daily.iloc[-1]['Inventory Value'])}
-            Safety Stock Level: {int(safety_stock)}
-            Dead Stock Value: {int(daily.iloc[-1]['Dead Value'])}
-            Avg Inventory Age: {int(daily['Avg Age'].mean())} days
-            """
-            st.sidebar.text_area("Copy Summary", summary_text, height=150)
+        st.sidebar.subheader("📋 Professional PDF Report")
 
+        from fpdf import FPDF
+        import matplotlib.pyplot as plt
+        import tempfile
+
+        def create_pdf(df_daily, total_val, dead_val, avg_age, rop_val):
+            pdf = FPDF()
+            pdf.add_page()
+            
+            # --- Title ---
+            pdf.set_font("Arial", 'B', 20)
+            pdf.cell(0, 15, "Inventory Intelligence Report", ln=True, align='C')
+            pdf.set_font("Arial", '', 10)
+            pdf.cell(0, 5, f"Generated on: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}", ln=True, align='C')
+            pdf.ln(10)
+
+            # --- KPI Section ---
+            pdf.set_fill_color(240, 240, 240)
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(0, 10, " 1. Key Business Metrics", ln=True, fill=True)
+            pdf.set_font("Arial", '', 11)
+            pdf.ln(2)
+            pdf.cell(90, 8, f"Total Inventory Value: {int(total_val):,}")
+            pdf.cell(90, 8, f"Dead Stock Value: {int(dead_val):,}", ln=True)
+            pdf.cell(90, 8, f"Average Stock Age: {int(avg_age)} Days")
+            pdf.cell(90, 8, f"System Reorder Point: {int(rop_val)} Units", ln=True)
+            pdf.ln(10)
+
+            # --- Chart Section ---
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(0, 10, " 2. Inventory Trend Analysis", ln=True, fill=True)
+            
+            # Create a Matplotlib figure for the PDF
+            plt.figure(figsize=(10, 5))
+            plt.plot(df_daily["Date"], df_daily["Closing_Stock"], color='#1f77b4', label="Stock Level")
+            plt.axhline(y=rop_val, color='r', linestyle='--', label="ROP")
+            plt.title("Inventory Level Trend")
+            plt.grid(True, alpha=0.3)
+            plt.legend()
+            
+            # Save plot to a temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
+                plt.savefig(tmpfile.name, dpi=150)
+                pdf.image(tmpfile.name, x=10, y=pdf.get_y() + 5, w=190)
+            plt.close()
+
+            return pdf.output(dest='S')
+
+        # Run PDF Function
+        if st.sidebar.button("🛠️ Build PDF Report"):
+            pdf_bytes = create_pdf(
+                daily, 
+                daily.iloc[-1]["Inventory Value"],
+                daily.iloc[-1]["Dead Value"],
+                daily["Avg Age"].mean(),
+                rop
+            )
+            
+            st.sidebar.download_button(
+                label="📥 Download PDF Now",
+                data=pdf_bytes,
+                file_name="Inventory_Analysis.pdf",
+                mime="application/pdf"
+            )
+            
     except Exception as e:
         st.error(str(e))
