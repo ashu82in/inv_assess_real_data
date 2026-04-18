@@ -316,9 +316,11 @@ if uploaded_file:
         st.sidebar.markdown("---")
         st.sidebar.subheader("📋 Full Professional Report")
 
+
         from fpdf import FPDF
         import matplotlib.pyplot as plt
         import tempfile
+        import io
 
         def create_full_pdf(df_daily, df_raw, bucket_df, total_val, dead_val, avg_age, rop_val):
             pdf = FPDF()
@@ -327,29 +329,30 @@ if uploaded_file:
             # --- PAGE 1: EXECUTIVE SUMMARY ---
             pdf.add_page()
             pdf.set_font("Arial", 'B', 24)
-            pdf.cell(0, 20, "Inventory Intelligence Dashboard", ln=True, align='C')
+            pdf.cell(0, 20, "Inventory Intelligence Report", ln=True, align='C')
             pdf.set_font("Arial", '', 10)
-            pdf.cell(0, 5, f"Report Period: {df_daily['Date'].min().date()} to {df_daily['Date'].max().date()}", ln=True, align='C')
+            pdf.cell(0, 5, f"Period: {df_daily['Date'].min().date()} to {df_daily['Date'].max().date()}", ln=True, align='C')
             pdf.ln(10)
 
-            # KPIs
-            pdf.set_fill_color(230, 235, 245)
+            # Strategic Metrics Boxes
+            pdf.set_fill_color(240, 245, 255)
             pdf.set_font("Arial", 'B', 14)
-            pdf.cell(0, 10, " 1. Strategic Metrics", ln=True, fill=True)
+            pdf.cell(0, 10, " 1. Executive Summary Metrics", ln=True, fill=True)
             pdf.ln(2)
             pdf.set_font("Arial", '', 12)
-            pdf.cell(95, 10, f"Total Inventory Value:  {int(total_val):,}", border=1)
-            pdf.cell(95, 10, f"Dead Stock Value:  {int(dead_val):,}", ln=True, border=1)
-            pdf.cell(95, 10, f"Average Stock Age:  {int(avg_age)} Days", border=1)
-            pdf.cell(95, 10, f"Reorder Point (ROP):  {int(rop_val)} Units", ln=True, border=1)
+            pdf.cell(95, 12, f" Total Inventory Value: {int(total_val):,}", border=1)
+            pdf.cell(95, 12, f" Dead Stock Value: {int(dead_val):,}", ln=True, border=1)
+            pdf.cell(95, 12, f" Average Stock Age: {int(avg_age)} Days", border=1)
+            pdf.cell(95, 12, f" Reorder Point (ROP): {int(rop_val)} Units", ln=True, border=1)
             pdf.ln(10)
 
-            # GRAPH 1: Inventory Quantity Trend
+            # GRAPH 1: Trend Line
             pdf.set_font("Arial", 'B', 14)
-            pdf.cell(0, 10, " 2. Stock Level & ROP Trend", ln=True)
+            pdf.cell(0, 10, " 2. Inventory Level & ROP Trend", ln=True)
             plt.figure(figsize=(10, 4))
-            plt.plot(df_daily["Date"], df_daily["Closing_Stock"], label="Stock Level")
+            plt.plot(df_daily["Date"], df_daily["Closing_Stock"], color='#1f77b4', label="Stock Level")
             plt.axhline(y=rop_val, color='r', linestyle='--', label="ROP")
+            plt.title("Daily Closing Stock vs. Reorder Point")
             plt.grid(True, alpha=0.3)
             plt.legend()
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
@@ -360,39 +363,51 @@ if uploaded_file:
             # --- PAGE 2: AGING & DISTRIBUTION ---
             pdf.add_page()
             
-            # GRAPH 2: Aging Buckets (Stacked Bar)
+            # GRAPH 2: Aging Buckets (The Fix for 'freq' error is here)
             pdf.set_font("Arial", 'B', 14)
-            pdf.cell(0, 10, " 3. Inventory Aging Analysis", ln=True, fill=True)
+            pdf.cell(0, 10, " 3. Inventory Aging Analysis (Weekly)", ln=True, fill=True)
             pdf.ln(5)
-            bucket_df.plot(kind='bar', stacked=True, figsize=(10, 5))
-            plt.title("Aging Buckets Over Time")
+            
+            # Resample bucket data to Weekly to avoid 'freq' error and clear up the graph
+            temp_bucket = bucket_df.copy()
+            temp_bucket.index = pd.to_datetime(temp_bucket.index)
+            temp_bucket = temp_bucket.resample('W').mean() 
+
+            fig, ax = plt.subplots(figsize=(10, 5))
+            temp_bucket.plot(kind='bar', stacked=True, ax=ax)
+            plt.title("Inventory Value by Aging Bucket")
+            plt.ylabel("Value")
             plt.xticks(rotation=45)
+            
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                 plt.savefig(tmp.name, dpi=150, bbox_inches='tight')
                 pdf.image(tmp.name, x=10, y=pdf.get_y(), w=190)
             plt.close()
-            pdf.ln(70) # Move cursor down after image
+            pdf.ln(80) 
 
-            # GRAPH 3: Inventory Distribution (Histogram)
+            # GRAPH 3: Histogram
             pdf.set_font("Arial", 'B', 14)
-            pdf.cell(0, 10, " 4. Stock Distribution", ln=True)
+            pdf.cell(0, 10, " 4. Stock Level Distribution", ln=True)
             plt.figure(figsize=(10, 4))
-            plt.hist(df_daily["Closing_Stock"], bins=20, color='skyblue', edgecolor='black')
+            plt.hist(df_daily["Closing_Stock"], bins=20, color='skyblue', edgecolor='black', alpha=0.7)
             plt.axvline(rop_val, color='red', linestyle='dashed', linewidth=2, label='ROP')
-            plt.title("Frequency of Stock Levels")
+            plt.title("Frequency of Stock Quantities")
+            plt.xlabel("Quantity")
+            plt.ylabel("Days Count")
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                 plt.savefig(tmp.name, dpi=150, bbox_inches='tight')
                 pdf.image(tmp.name, x=10, y=pdf.get_y(), w=190)
             plt.close()
 
-            # --- PAGE 3: MOVEMENT (Optional) ---
+            # --- PAGE 3: MOVEMENT (Only if Party data exists) ---
             if "Party" in df_raw.columns:
                 pdf.add_page()
                 pdf.set_font("Arial", 'B', 14)
-                pdf.cell(0, 10, " 5. Movement Analysis (Purchases & Sales)", ln=True, fill=True)
+                pdf.cell(0, 10, " 5. Stock Movement (Purchases & Sales)", ln=True, fill=True)
                 plt.figure(figsize=(10, 5))
                 plt.bar(df_daily["Date"], df_daily["Purchase Qty"], color='green', alpha=0.5, label="Purchases")
                 plt.bar(df_daily["Date"], df_daily["Sales Qty"], color='red', alpha=0.5, label="Sales")
+                plt.title("Incoming vs Outgoing Material")
                 plt.legend()
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                     plt.savefig(tmp.name, dpi=150, bbox_inches='tight')
@@ -401,21 +416,30 @@ if uploaded_file:
 
             return pdf.output(dest='S')
 
-        # Logic to trigger the build
+        # Sidebar Buttons
         if st.sidebar.button("🛠️ Build Full Dashboard PDF"):
-            full_pdf_bytes = create_full_pdf(
-                daily, df, bucket_df,
-                daily.iloc[-1]["Inventory Value"],
-                daily.iloc[-1]["Dead Value"],
-                daily["Avg Age"].mean(),
-                rop
-            )
-            
-            st.sidebar.download_button(
-                label="📥 Download Full PDF",
-                data=bytes(full_pdf_bytes),
-                file_name="Full_Inventory_Dashboard.pdf",
-                mime="application/pdf"
-            )
+            try:
+                full_pdf_bytes = create_full_pdf(
+                    daily, df, bucket_df,
+                    daily.iloc[-1]["Inventory Value"],
+                    daily.iloc[-1]["Dead Value"],
+                    daily["Avg Age"].mean(),
+                    rop
+                )
+                
+                st.sidebar.download_button(
+                    label="📥 Download Full PDF",
+                    data=bytes(full_pdf_bytes),
+                    file_name=f"Full_Inventory_Report_{pd.Timestamp.now().strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf"
+                )
+                st.sidebar.success("PDF Ready for Download!")
+            except Exception as e:
+                st.sidebar.error(f"PDF Error: {str(e)}")
+
+        # Keep the Excel option as well for data analysis
+        if st.sidebar.button("🛠️ Prepare Excel Export"):
+            # (Reuse your previous to_excel function logic here if desired)
+            pass
     except Exception as e:
         st.error(str(e))
